@@ -24,7 +24,7 @@ import threading
 import time as _time
 import subprocess
 from . import lifecycle as lc
-import research
+from . import research
 
 log = logging.getLogger("manager")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -460,7 +460,7 @@ if STATIC_DIR.exists():
 def main() -> None:
     import uvicorn
     cfg = config.load()["manager"]
-    uvicorn.run("manager:app", host=cfg["host"], port=int(cfg["port"]), log_level="info")
+    uvicorn.run("llmeister.manager:app", host=cfg["host"], port=int(cfg["port"]), log_level="info")
 
 
 if __name__ == "__main__":
