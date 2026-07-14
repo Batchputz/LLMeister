@@ -95,7 +95,7 @@
 </head>
 <body x-data="mgr()" x-init="poll()">
 <header>
-  <h1>LLMeister <span class="ver">v9</span></h1>
+  <h1>LLMeister <span class="ver">v10</span></h1>
   <div class="res-bars">
     <div class="mem"><span>RAM</span><div class="bar"><i :style="`width:${memPct()}%`"></i></div><span class="val"><b x-text="memUsed"></b>/<b x-text="memTotal"></b>GB</span></div>
     <div class="mem"><span>CPU</span><div class="bar"><i :style="`width:${cpuPct}%;background:linear-gradient(90deg,#60a5fa,#818cf8)`"></i></div><span class="val"><b x-text="cpuPct"></b>%</span></div>
@@ -120,6 +120,7 @@
         <button @click="act(m.name,'start')" x-show="['STOPPED','ERROR'].includes(m.state)">Start</button>
         <button @click="openEdit(m.name)">Edit</button>
         <button @click="openLog(m.name)">Log</button>
+        <button @click="openMetrics(m.name)" x-show="['AWAKE','SLEEPING'].includes(m.state)">Metrics</button>
         <button @click="runBenchmark(m.name)" :disabled="benchmarking.includes(m.name)" x-show="m.state==='AWAKE'" x-text="benchmarking.includes(m.name)?'…':'Bench'"></button>
         <button class="primary" @click="openChat(m.name)" x-show="m.state==='AWAKE'">Chat</button>
         <button class="danger" @click="act(m.name,'stop')" :disabled="m.state==='STOPPED'">Stop</button>
@@ -271,12 +272,41 @@
   </div>
 </div>
 
+<div class="overlay" x-show="metricsModal.open" x-transition.opacity style="display:none" @keydown.escape.window="closeMetrics()">
+  <div class="modal-panel metrics-panel" @click.away="closeMetrics()">
+    <div class="modal-head"><span>Metrics — <b x-text="metricsModal.name"></b></span>
+      <button class="x" @click="closeMetrics()" aria-label="Close">×</button></div>
+    <div x-show="metricsModal.loading" class="chat-empty">Loading metrics…</div>
+    <div x-show="!metricsModal.loading && metricsModal.data" style="padding:12px;overflow-y:auto">
+      <div class="metrics-stats">
+        <template x-for="m in (metricsModal.data?.metrics||[])" :key="m.key">
+          <div class="mstat" :style="'--mc:'+m.color">
+            <span class="mstat-label" x-text="m.label"></span>
+            <b class="mstat-val" x-text="(metricsModal.data?.summary?.[m.key]?.latest||0).toFixed(1)"></b>
+            <span class="mstat-unit" x-text="m.unit"></span>
+            <div class="mstat-meta" x-text="'min '+(metricsModal.data?.summary?.[m.key]?.min||0).toFixed(1)+' · max '+(metricsModal.data?.summary?.[m.key]?.max||0).toFixed(1)+' · avg '+(metricsModal.data?.summary?.[m.key]?.avg||0).toFixed(1)"></div>
+          </div>
+        </template>
+      </div>
+      <div class="mpills">
+        <template x-for="m in (metricsModal.data?.metrics||[])" :key="m.key">
+          <button class="mpill" :class="metricsVisible[m.key]?'':'off'" :style="'--mc:'+m.color" @click="toggleMetric(m.key)" x-text="m.label"></button>
+        </template>
+      </div>
+      <div id="metricsChart"></div>
+    </div>
+    <div x-show="!metricsModal.loading && !metricsModal.data && !metricsModal.error" class="chat-empty">No engine-statistics found in log.</div>
+    <div x-show="metricsModal.error" class="chat-empty" style="color:var(--err)" x-text="metricsModal.error"></div>
+  </div>
+</div>
+
 <script>
 function mgr(){return{
   models:[],busy:[],memTotal:0,memUsed:0,memAvail:0,cpuPct:0,gpuPct:0,benchResults:{},benchmarking:[],sysOs:"",sysGpu:"",sysCuda:"",sysVllm:"",sysDocker:"",sysArch:"",sysUptime:0,newId:'',researching:false,researchErr:'',importing:false,
   modal:{open:false,name:'',cfg:null,loading:false,saving:false,status:'',statusType:'',dirty:false,served:'',aliases:''},
   logModal:{open:false,name:'',raw:'',path:'',filter:true,search:'',live:false,loading:false,timer:null},
   chatModal:{open:false,name:'',messages:[],input:'',loading:false,system:'',maxTokens:512,error:''},
+  metricsModal:{open:false,name:'',data:null,loading:false,error:''},metricsVisible:{prompt:true,generation:true,running:true,waiting:true,gpu_kv:true,prefix:true,mm:true},
   isBusy(n){return this.busy.includes(n)},
   memPct(){return this.memTotal?Math.min(100,this.memUsed/this.memTotal*100).toFixed(0):0},
   sysInfo(){let h=Math.floor(this.sysUptime/3600),m=Math.floor((this.sysUptime%3600)/60);let up=h>0?h+"h"+m+"m":m+"m";let v=this.sysVllm?this.sysVllm.split("+")[0].replace(".dev24",""):"";let c=this.sysCuda?this.sysCuda.split(".")[0]:"";return[this.sysOs,this.sysGpu,c?"CUDA "+c:"",v?"vLLM "+v:"","▲ "+up,this.sysArch].filter(Boolean).join(" · ");},
@@ -342,6 +372,51 @@ function mgr(){return{
   // ---- chat modal ----
   openChat(name){this.chatModal={open:true,name:name,messages:[],input:'',loading:false,system:'',maxTokens:512,error:''}},
   closeChat(){this.chatModal.open=false},
+  async openMetrics(name){
+    this.metricsModal={open:true,name:name,data:null,loading:true,error:''};
+    if(!window.Plotly){
+      var s=document.createElement('script');
+      s.src='https://cdn.plot.ly/plotly-2.35.2.min.js';
+      s.onload=()=>{this.renderMetricsChart()};
+      document.head.appendChild(s);
+    }
+    try{
+      const r=await fetch('/api/'+name+'/metrics');
+      const d=await r.json();
+      if(r.ok){this.metricsModal.data=d;this.metricsModal.loading=false;
+        this.$nextTick(()=>this.renderMetricsChart());}
+      else{this.metricsModal.loading=false;this.metricsModal.error=d.error||'failed';}
+    }catch(e){this.metricsModal.loading=false;this.metricsModal.error=e.message}
+  },
+  closeMetrics(){this.metricsModal.open=false},
+  toggleMetric(key){this.metricsVisible[key]=!this.metricsVisible[key];this.renderMetricsChart();},
+  renderMetricsChart(){
+    if(!window.Plotly||!this.metricsModal.data)return;
+    var D=this.metricsModal.data;if(!D.timestamps||!D.timestamps.length)return;
+    var el=document.getElementById('metricsChart');if(!el)return;
+    var ms=D.metrics,times=D.timestamps,vis=this.metricsVisible;
+    var traces=ms.map(m=>({x:times,y:m.values,name:m.label,type:'scatter',mode:'lines',
+      line:{color:m.color,width:1.4},yaxis:m.axis,visible:vis[m.key]!==false,showlegend:false}));
+    var yMax={y:0,y2:0};
+    traces.forEach(t=>{if(t.visible!==false&&t.y&&t.y.length){var mx=0;t.y.forEach(v=>{if(v>mx)mx=v;});if(mx>yMax[t.yaxis])yMax[t.yaxis]=mx;}});
+    var pad=v=>v/0.95;
+    var layout={
+      font:{family:'system-ui,sans-serif',size:11,color:'#8a93a3'},
+      paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#0c0e12',
+      margin:{l:60,r:60,t:8,b:48},hovermode:'x unified',
+      xaxis:{type:'date',gridcolor:'#1a1c23',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
+        rangeslider:{visible:true,thickness:0.05,bgcolor:'#111317',bordercolor:'#262a33'}},
+      yaxis:{title:{text:'tokens/s',font:{size:10,color:'#8a93a3'}},gridcolor:'#1a1c23',
+        linecolor:'#262a33',rangemode:'tozero',tickfont:{size:10,color:'#8a93a3'},
+        range:yMax.y>0?[0,pad(yMax.y)]:[0,1],autorange:false},
+      yaxis2:{title:{text:'reqs / %',font:{size:10,color:'#8a93a3'}},overlaying:'y',side:'right',
+        rangemode:'tozero',gridcolor:'rgba(0,0,0,0)',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
+        range:yMax.y2>0?[0,pad(yMax.y2)]:[0,1],autorange:false},
+      showlegend:false
+    };
+    Plotly.react(el,traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,
+      modeBarButtonsToRemove:['lasso2d','select2d']});
+  },
   clearChat(){this.chatModal.messages=[];this.chatModal.error=''},
   scrollChat(){var el=document.querySelector('.chat-msgs');if(el)el.scrollTop=el.scrollHeight},
   async sendChat(){var text=this.chatModal.input.trim();if(!text||this.chatModal.loading)return;

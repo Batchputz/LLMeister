@@ -20,6 +20,7 @@ from . import config
 from . import db
 from . import launcher
 from . import benchmark
+from . import metrics
 import threading
 import time as _time
 import subprocess
@@ -281,6 +282,17 @@ async def api_benchmark(name: str) -> dict:
     except Exception as e:
         log.exception("benchmark failed for %s", name)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/{name}/metrics")
+async def api_metrics(name: str) -> dict:
+    m = MGR._get(name)
+    if not m:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    log_path = launcher.RECIPE_OUT_DIR / f"{name}.launch.log"
+    if not log_path.exists():
+        return JSONResponse({"error": "no launch log for this model"}, status_code=404)
+    return metrics.parse_engine_stats(log_path)
 
 
 # ---- /api new-model research ----
