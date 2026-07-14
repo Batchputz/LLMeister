@@ -73,6 +73,20 @@
   .log-meta{padding:6px 14px;border-top:1px solid #262a33;font-size:10px;color:var(--mut);display:flex;justify-content:space-between}
   /* chat modal */
   .chat-panel{max-width:720px;display:flex;flex-direction:column;max-height:88vh}
+  /* metrics modal */
+  .metrics-panel{max-width:94vw!important;width:1100px!important;display:flex;flex-direction:column;max-height:92vh}
+  .metrics-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+  .mstat{background:var(--panel2);border:1px solid #2c313c;border-radius:8px;padding:8px 10px;border-left:3px solid var(--mc)}
+  .mstat-label{color:var(--mut);display:block;font-size:9px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+  .mstat-val{font-size:18px;font-family:ui-monospace,monospace;color:var(--txt);font-weight:600}
+  .mstat-unit{font-size:10px;color:var(--mut);margin-left:3px}
+  .mstat-meta{font-size:9px;color:var(--mut);font-family:ui-monospace,monospace;margin-top:3px}
+  .mpills{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}
+  .mpill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;border:1.5px solid var(--mc);background:var(--panel2);color:var(--txt);cursor:pointer;font-size:10px;user-select:none;transition:opacity .15s}
+  .mpill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--mc);flex-shrink:0}
+  .mpill.off{opacity:.35}
+  .mpill.off::before{opacity:.3}
+  #metricsChart{width:100%;height:calc(82vh - 220px);min-height:300px;flex:1}
   .chat-tools{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid #262a33;flex-wrap:wrap}
   .chat-tools input{background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:5px 8px;font-size:11px}
   .chat-tools input.sys{flex:1;min-width:120px}
@@ -277,7 +291,7 @@
     <div class="modal-head"><span>Metrics — <b x-text="metricsModal.name"></b></span>
       <button class="x" @click="closeMetrics()" aria-label="Close">×</button></div>
     <div x-show="metricsModal.loading" class="chat-empty">Loading metrics…</div>
-    <div x-show="!metricsModal.loading && metricsModal.data" style="padding:12px;overflow-y:auto">
+    <div x-show="!metricsModal.loading && metricsModal.data" style="padding:12px;overflow-y:auto;flex:1;display:flex;flex-direction:column;width:100%">
       <div class="metrics-stats">
         <template x-for="m in (metricsModal.data?.metrics||[])" :key="m.key">
           <div class="mstat" :style="'--mc:'+m.color">
@@ -394,28 +408,35 @@ function mgr(){return{
     if(!window.Plotly||!this.metricsModal.data)return;
     var D=this.metricsModal.data;if(!D.timestamps||!D.timestamps.length)return;
     var el=document.getElementById('metricsChart');if(!el)return;
-    var ms=D.metrics,times=D.timestamps,vis=this.metricsVisible;
-    var traces=ms.map(m=>({x:times,y:m.values,name:m.label,type:'scatter',mode:'lines',
-      line:{color:m.color,width:1.4},yaxis:m.axis,visible:vis[m.key]!==false,showlegend:false}));
-    var yMax={y:0,y2:0};
-    traces.forEach(t=>{if(t.visible!==false&&t.y&&t.y.length){var mx=0;t.y.forEach(v=>{if(v>mx)mx=v;});if(mx>yMax[t.yaxis])yMax[t.yaxis]=mx;}});
-    var pad=v=>v/0.95;
-    var layout={
-      font:{family:'system-ui,sans-serif',size:11,color:'#8a93a3'},
-      paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#0c0e12',
-      margin:{l:60,r:60,t:8,b:48},hovermode:'x unified',
-      xaxis:{type:'date',gridcolor:'#1a1c23',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
-        rangeslider:{visible:true,thickness:0.05,bgcolor:'#111317',bordercolor:'#262a33'}},
-      yaxis:{title:{text:'tokens/s',font:{size:10,color:'#8a93a3'}},gridcolor:'#1a1c23',
-        linecolor:'#262a33',rangemode:'tozero',tickfont:{size:10,color:'#8a93a3'},
-        range:yMax.y>0?[0,pad(yMax.y)]:[0,1],autorange:false},
-      yaxis2:{title:{text:'reqs / %',font:{size:10,color:'#8a93a3'}},overlaying:'y',side:'right',
-        rangemode:'tozero',gridcolor:'rgba(0,0,0,0)',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
-        range:yMax.y2>0?[0,pad(yMax.y2)]:[0,1],autorange:false},
-      showlegend:false
-    };
-    Plotly.react(el,traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,
-      modeBarButtonsToRemove:['lasso2d','select2d']});
+    // Delay render to let flex layout settle, then force resize
+    var self=this;
+    setTimeout(function(){
+      var ms=D.metrics,times=D.timestamps,vis=self.metricsVisible;
+      var traces=ms.map(function(m){return{x:times,y:m.values,name:m.label,type:'scatter',mode:'lines',
+        line:{color:m.color,width:1.4},yaxis:m.axis,visible:vis[m.key]!==false,showlegend:false};});
+      var yMax={y:0,y2:0};
+      traces.forEach(function(t){if(t.visible!==false&&t.y&&t.y.length){var mx=0;t.y.forEach(function(v){if(v>mx)mx=v;});if(mx>yMax[t.yaxis])yMax[t.yaxis]=mx;}});
+      var pad=function(v){return v/0.95;};
+      var layout={
+        font:{family:'system-ui,sans-serif',size:11,color:'#8a93a3'},
+        paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#0c0e12',
+        margin:{l:60,r:60,t:8,b:48},hovermode:'x unified',
+        xaxis:{type:'date',gridcolor:'#1a1c23',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
+          rangeslider:{visible:true,thickness:0.05,bgcolor:'#111317',bordercolor:'#262a33'}},
+        yaxis:{title:{text:'tokens/s',font:{size:10,color:'#8a93a3'}},gridcolor:'#1a1c23',
+          linecolor:'#262a33',rangemode:'tozero',tickfont:{size:10,color:'#8a93a3'},
+          range:yMax.y>0?[0,pad(yMax.y)]:[0,1],autorange:false},
+        yaxis2:{title:{text:'reqs / %',font:{size:10,color:'#8a93a3'}},overlaying:'y',side:'right',
+          rangemode:'tozero',gridcolor:'rgba(0,0,0,0)',linecolor:'#262a33',tickfont:{size:10,color:'#8a93a3'},
+          range:yMax.y2>0?[0,pad(yMax.y2)]:[0,1],autorange:false},
+        showlegend:false
+      };
+      Plotly.react(el,traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,
+        modeBarButtonsToRemove:['lasso2d','select2d']});
+      // Force resize after render to fill container
+      setTimeout(function(){Plotly.Plots.resize(el);},50);
+    },100);
+    if(!this._metricsResize){this._metricsResize=true;window.addEventListener('resize',function(){if(self.metricsModal.open&&window.Plotly){var e=document.getElementById('metricsChart');if(e)Plotly.Plots.resize(e);}});}
   },
   clearChat(){this.chatModal.messages=[];this.chatModal.error=''},
   scrollChat(){var el=document.querySelector('.chat-msgs');if(el)el.scrollTop=el.scrollHeight},
