@@ -1,0 +1,26 @@
+# LLMeister — single source of truth for SYSTEM config.
+# Per-MODEL config lives in the SQLite registry (db.py). Nothing here is hardcoded in code.
+
+manager:
+  host: "0.0.0.0"
+  port: 9001            # the manager's API + dashboard. 8XXX reserved for vLLM backends.
+
+vllm:
+  port_range: [8001, 8099]   # pool for backend vLLM containers
+  image: "vllm-node:latest"
+  host: "127.0.0.1"
+
+memory:
+  os_reserve_gb: 12     # RAM to leave for OS/Docker/manager
+  poll_interval_s: 5    # how often to read /proc/meminfo
+
+# Research agent (new-model discovery). Keys via env, not stored here.
+research:
+  perplexity_key_env: "PERPLEXITY_API_KEY"
+  perplexity_model: "sonar-pro"
+  deepseek_key_env: "DEEPSEEK_API_KEY"
+  deepseek_model: "deepseek-chat"
+
+# Optional: auto-wake a sleeping model when a /v1 request targets it.
+# false = return 503 immediately (operator wakes via dashboard).
+wake_on_request: false

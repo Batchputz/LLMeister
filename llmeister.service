@@ -1,0 +1,18 @@
+[Unit]
+Description=LLMeister — centralized vLLM lifecycle/routing/dashboard
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/batchputz/spark-vllm-docker/llmeister
+Environment=HOME=/home/batchputz
+Environment=PATH=/home/batchputz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-%h/.config/llmeister.env
+ExecStart=/home/batchputz/.local/bin/uv run python manager.py
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

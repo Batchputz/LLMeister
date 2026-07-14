@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLMeister</title>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--txt:#e6e6e6;--mut:#8a93a3;
+        --acc:#4f9cf9;--ok:#3fb950;--warn:#d29922;--err:#f85149;--slp:#a371f7;--pend:#56d4dd;--disc:#d4a372}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt)}
+  header{padding:14px 20px;background:var(--panel);border-bottom:1px solid #262a33;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  .ver{font-size:10px;color:var(--mut);font-weight:400}
+  .res-bars{display:flex;flex-direction:column;gap:3px}
+  .sys-info{font-size:10px;color:var(--mut);text-align:right;line-height:1.35;margin-left:auto;max-width:340px;flex-shrink:0}
+  .mem{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut)}
+  .bar{width:220px;height:10px;background:#262a33;border-radius:6px;overflow:hidden}
+  .mem .val{min-width:70px;text-align:right;flex-shrink:0}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--ok),var(--warn),var(--err))}
+  main{padding:20px;max-width:1100px;margin:0 auto}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:24px 0 10px;display:flex;align-items:center;gap:10px}
+  h2 .cnt{font-size:11px;background:#262a33;padding:1px 7px;border-radius:8px;color:var(--mut)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid #262a33;border-radius:10px;padding:12px}
+  .card .top{display:flex;justify-content:space-between;align-items:start;gap:8px}
+  .card .name{font-weight:600;font-size:14px}.card .hf{font-size:10px;color:var(--mut);word-break:break-all;margin-top:2px}
+  .badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap}
+  .b-AWAKE{background:#1e3a25;color:var(--ok)}.b-SLEEPING{background:#2a1f3d;color:var(--slp)}.b-STOPPED{background:#22262e;color:var(--mut)}
+  .b-STARTING,.b-WAKING{background:#3a2f12;color:var(--warn)}.b-ERROR{background:#3a1414;color:var(--err)}.b-PENDING{background:#12303a;color:var(--pend)}.b-DISCOVERED{background:#3a2f12;color:var(--disc)}
+  .row{display:flex;gap:12px;font-size:11px;color:var(--mut);margin:8px 0;flex-wrap:wrap}.row span b{color:var(--txt);font-weight:500}
+  .acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  button{background:var(--panel2);color:var(--txt);border:1px solid #2c313c;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;transition:transform .05s}
+  button:hover:not(:disabled){border-color:var(--acc)}
+  button:disabled{opacity:.4;cursor:default}
+  button:active:not(:disabled){transform:translateY(1px)}
+  button.danger:hover:not(:disabled){border-color:var(--err)}
+  button.primary{background:#1a4d2e;border-color:#2a6b3f;color:#c8ffd9}
+  .err{color:var(--err);font-size:10px;margin-top:5px;word-break:break-word}.notes{color:var(--mut);font-size:10px;margin-top:5px;font-style:italic}
+  .empty{color:var(--mut);font-size:12px;padding:8px 0}
+  .new{background:var(--panel);border:1px dashed #2c313c;border-radius:10px;padding:12px}
+  .new input{background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:7px 9px;font-size:12px;width:340px;max-width:100%}
+  .new .hint{font-size:10px;color:var(--mut);margin-top:5px}
+  .toolbar{margin-left:auto}
+  /* modal (shared) */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto}
+  .modal-panel{background:var(--panel);border:1px solid #2c313c;border-radius:12px;width:100%;max-width:680px;margin:auto;box-shadow:0 20px 60px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04)}
+  .modal-head{padding:14px 18px;border-bottom:1px solid #262a33;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:14px}
+  .modal-head .x{background:none;border:none;font-size:18px;color:var(--mut);cursor:pointer;padding:0 4px}
+  .modal-body{padding:16px 18px;max-height:65vh;overflow-y:auto}
+  .modal-foot{padding:12px 18px;border-top:1px solid #262a33;display:flex;align-items:center;gap:10px;justify-content:flex-end}
+  .modal-status{margin-right:auto;font-size:11px;color:var(--mut)}.modal-status.ok{color:var(--ok)}.modal-status.err{color:var(--err)}
+  .group-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid #262a33}.group-title:first-child{margin-top:0}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;color:var(--mut);margin-bottom:4px}
+  .field input[type=text],.field input[type=number],.field select,.field textarea{width:100%;background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit}
+  .field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--acc)}
+  .field textarea{font-family:ui-monospace,monospace;font-size:11px;min-height:150px;resize:vertical}
+  .field .hint{font-size:10px;color:var(--mut);margin-top:3px}
+  .field .range{display:flex;align-items:center;gap:10px}.field .range input{flex:1}
+  .field .range .val{font-family:ui-monospace,monospace;font-size:12px;color:var(--acc);min-width:40px;text-align:right}
+  .field .mono{font-family:ui-monospace,monospace}
+  .check{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px}.check input{width:auto}.check .hint{color:var(--mut);font-size:10px}
+  .skel{padding:50px;text-align:center;color:var(--mut)}
+  /* log modal */
+  .log-panel{max-width:900px}
+  .log-tools{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #262a33;flex-wrap:wrap}
+  .log-tools input[type=text]{flex:1;min-width:140px;background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:6px 9px;font-size:12px}
+  .log-tools input:focus{outline:none;border-color:var(--acc)}
+  .log-tools .toggle{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--mut);cursor:pointer;user-select:none}.log-tools .toggle input{width:auto}
+  .log-area{margin:0;padding:12px 14px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.5;color:#c8e6c9;background:#0c0e12;white-space:pre-wrap;word-break:break-word;max-height:62vh;overflow-y:auto}
+  .log-meta{padding:6px 14px;border-top:1px solid #262a33;font-size:10px;color:var(--mut);display:flex;justify-content:space-between}
+  /* chat modal */
+  .chat-panel{max-width:720px;display:flex;flex-direction:column;max-height:88vh}
+  .chat-tools{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid #262a33;flex-wrap:wrap}
+  .chat-tools input{background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:5px 8px;font-size:11px}
+  .chat-tools input.sys{flex:1;min-width:120px}
+  .chat-tools input:focus{outline:none;border-color:var(--acc)}
+  .chat-tools label{font-size:10px;color:var(--mut)}
+  .chat-msgs{padding:14px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;background:#0c0e12;min-height:300px}
+  .msg{width:fit-content;max-width:86%;padding:7px 11px;border-radius:10px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+  .msg.user{align-self:flex-end;background:#1a4d2e;border:1px solid #2a6b3f;color:#c8ffd9}
+  .msg.assistant{align-self:flex-start;background:var(--panel2);border:1px solid #2c313c}
+  .msg .reasoning{font-size:11px;color:var(--mut);margin-bottom:6px;border-left:2px solid #2c313c;padding-left:8px;white-space:pre-wrap}
+  .msg .role{font-size:9px;color:var(--mut);text-transform:uppercase;margin-bottom:3px;letter-spacing:.05em}
+  .chat-empty{color:var(--mut);font-size:12px;text-align:center;padding:40px 10px}
+  .chat-input{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #262a33}
+  .chat-input textarea{flex:1;background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:8px;font-size:13px;font-family:inherit;resize:none;height:64px}
+  .chat-input textarea:focus{outline:none;border-color:var(--acc)}
+  .chat-input button{align-self:stretch}
+  .cursor{display:inline-block;width:7px;height:13px;background:var(--acc);vertical-align:middle;animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:0}}
+</style>
+</head>
+<body x-data="mgr()" x-init="poll()">
+<header>
+  <h1>LLMeister <span class="ver">v9</span></h1>
+  <div class="res-bars">
+    <div class="mem"><span>RAM</span><div class="bar"><i :style="`width:${memPct()}%`"></i></div><span class="val"><b x-text="memUsed"></b>/<b x-text="memTotal"></b>GB</span></div>
+    <div class="mem"><span>CPU</span><div class="bar"><i :style="`width:${cpuPct}%;background:linear-gradient(90deg,#60a5fa,#818cf8)`"></i></div><span class="val"><b x-text="cpuPct"></b>%</span></div>
+    <div class="mem"><span>GPU</span><div class="bar"><i :style="`width:${gpuPct}%;background:linear-gradient(90deg,#a78bfa,#f472b6)`"></i></div><span class="val"><b x-text="gpuPct"></b>%</span></div>
+  </div>
+  <div class="sys-info" x-text="sysInfo()"></div>
+</header>
+<main>
+  <h2>Running <span class="cnt" x-text="running().length"></span></h2>
+  <div class="grid">
+    <template x-for="m in running()" :key="m.name"><div class="card">
+      <div class="top"><div><div class="name" x-text="m.name"></div><div class="hf" x-text="m.hf_model_id"></div></div>
+        <span class="badge" :class="'b-'+m.state" x-text="m.state"></span></div>
+      <div class="row"><span>port <b x-text="m.port||'—'"></b></span>
+        <span>awake <b x-text="m.measured_max_memory_mb?(m.measured_max_memory_mb/1024).toFixed(1)+'G':'—'"></b></span>
+        <span>sleep <b x-text="m.measured_weight_memory_mb?(m.measured_weight_memory_mb/1024).toFixed(1)+'G':'—'"></b></span></div>
+      <div class="notes" x-show="m.notes" x-text="m.notes"></div>
+      <div class="err" x-show="m.error" x-text="m.error"></div>
+      <div class="acts">
+        <button @click="act(m.name,'sleep')" :disabled="m.state!=='AWAKE'" x-show="m.state==='AWAKE'">Sleep</button>
+        <button @click="act(m.name,'wake')" :disabled="m.state!=='SLEEPING'" x-show="m.state==='SLEEPING'">Wake</button>
+        <button @click="act(m.name,'start')" x-show="['STOPPED','ERROR'].includes(m.state)">Start</button>
+        <button @click="openEdit(m.name)">Edit</button>
+        <button @click="openLog(m.name)">Log</button>
+        <button @click="runBenchmark(m.name)" :disabled="benchmarking.includes(m.name)" x-show="m.state==='AWAKE'" x-text="benchmarking.includes(m.name)?'…':'Bench'"></button>
+        <button class="primary" @click="openChat(m.name)" x-show="m.state==='AWAKE'">Chat</button>
+        <button class="danger" @click="act(m.name,'stop')" :disabled="m.state==='STOPPED'">Stop</button>
+      </div>
+      <div class="bench" x-show="benchResults[m.name]">
+        <template x-if="benchResults[m.name]">
+          <span>TTFT <b x-text="benchResults[m.name].summary.avg_ttft_ms+'ms'"></b> &middot; tok/s <b x-text="benchResults[m.name].summary.avg_tok_per_sec"></b> &middot; <span class="blabel" @click="benchResults[m.name]=null" style="cursor:pointer;color:var(--warn)">✕</span></span>
+        </template>
+      </div></div></template>
+    <div class="empty" x-show="running().length===0">No models running.</div>
+  </div>
+
+  <h2>Available <span class="cnt" x-text="available().length"></span></h2>
+  <div class="grid">
+    <template x-for="m in available()" :key="m.name"><div class="card">
+      <div class="top"><div><div class="name" x-text="m.name"></div><div class="hf" x-text="m.hf_model_id"></div></div>
+        <span class="badge b-STOPPED" x-text="m.state"></span></div>
+      <div class="row"><span>port <b x-text="m.port||'—'"></b></span>
+        <span x-show="m.measured_max_memory_mb">awake <b x-text="(m.measured_max_memory_mb/1024).toFixed(1)+'G'"></b></span></div>
+      <div class="acts"><button @click="act(m.name,'start')">Start</button>
+        <button @click="openEdit(m.name)">Edit</button>
+        <button @click="openLog(m.name)">Log</button>
+        <button class="danger" @click="del(m.name)">Delete</button></div></div></template>
+    <div class="empty" x-show="available().length===0">No stopped models.</div>
+  </div>
+
+  <h2>Pending (researched) <span class="cnt" x-text="pending().length"></span></h2>
+  <div class="grid">
+    <template x-for="m in pending()" :key="m.name"><div class="card">
+      <div class="top"><div><div class="name" x-text="m.name"></div><div class="hf" x-text="m.hf_model_id"></div></div>
+        <span class="badge b-PENDING" x-text="m.state"></span></div>
+      <div class="notes" x-show="m.notes" x-text="m.notes"></div>
+      <div class="err" x-show="m.error" x-text="m.error"></div>
+      <div class="acts">
+        <button class="primary" @click="approve(m.name)">Approve</button>
+        <button @click="openEdit(m.name)">Edit config</button>
+        <button @click="researchExisting(m.name)" :disabled="isBusy(m.name)" x-text="isBusy(m.name)?'Researching…':'Re-research'"></button>
+        <button class="danger" @click="del(m.name)">Discard</button></div></div></template>
+    <div class="empty" x-show="pending().length===0">No pending candidates.</div>
+  </div>
+
+  <h2>Discovered (in HF cache) <span class="cnt" x-text="discovered().length"></span>
+    <button class="toolbar" @click="importCached" :disabled="importing" x-text="importing?'Scanning…':'Scan cache'"></button></h2>
+  <div class="grid">
+    <template x-for="m in discovered()" :key="m.name"><div class="card">
+      <div class="top"><div><div class="name" x-text="m.hf_model_id"></div></div>
+        <span class="badge b-DISCOVERED" x-text="m.state"></span></div>
+      <div class="acts">
+        <button class="primary" @click="researchExisting(m.name)" :disabled="isBusy(m.name)" x-text="isBusy(m.name)?'Researching…':'Research'">Research</button>
+        <button class="danger" @click="del(m.name)">Delete</button></div></div></template>
+    <div class="empty" x-show="discovered().length===0">No cached models discovered. Click "Scan cache".</div>
+  </div>
+
+  <h2>New model</h2>
+  <div class="new">
+    <form @submit.prevent="research">
+      <input placeholder="HuggingFace model id, e.g. google/gemma-4-12B-it" x-model="newId">
+      <button type="submit" :disabled="!newId||researching" x-text="researching?'Researching…':'Research & add'"></button>
+    </form>
+    <div class="hint">Perplexity + DeepSeek agent determines optimal vLLM config for GB10. Requires API keys in the manager env.</div>
+    <div class="err" x-show="researchErr" x-text="researchErr"></div>
+  </div>
+</main>
+
+<!-- Edit config modal -->
+<div class="overlay" x-show="modal.open" x-transition.opacity style="display:none" @keydown.escape.window="closeEdit()">
+  <div class="modal-panel" @click.away="closeEdit()">
+    <div class="modal-head"><span>Edit config — <b x-text="modal.name"></b></span>
+      <button class="x" @click="closeEdit()" aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <div class="skel" x-show="modal.loading">Loading config…</div>
+      <template x-if="modal.cfg">
+        <div @input="modal.dirty=true">
+          <div class="group-title">Identity</div>
+          <div class="field"><label>Display name</label><input type="text" x-model="modal.cfg.recipe_name"></div>
+          <div class="field"><label>HuggingFace model id</label><input type="text" x-model="modal.cfg.hf_model_id" class="mono">
+            <div class="hint">The repo vLLM loads. Changing this points to different weights.</div></div>
+          <div class="field"><label>Served model names</label><input type="text" x-model="modal.served">
+            <div class="hint">Comma-separated ids vLLM will accept (e.g. Qwen3.5-4B, qwen3.5-4b).</div></div>
+          <div class="field"><label>Aliases (gateway routing)</label><input type="text" x-model="modal.aliases">
+            <div class="hint">Comma-separated short names the /v1 proxy resolves.</div></div>
+          <div class="group-title">Launch</div>
+          <div class="field"><label>GPU memory utilization</label>
+            <div class="range"><input type="range" min="0.1" max="0.9" step="0.05" x-model.number="modal.cfg.defaults.gpu_memory_utilization">
+              <span class="val" x-text="modal.cfg.defaults.gpu_memory_utilization"></span></div>
+            <div class="hint">Fraction of 128 GB reserved. Higher = bigger KV cache but less room for other models.</div></div>
+          <div class="field"><label>Max model len (tokens)</label><input type="number" x-model.number="modal.cfg.defaults.max_model_len" class="mono">
+            <div class="hint">Context window per sequence. Large values increase cold-start time + memory.</div></div>
+          <div class="field"><label>Port</label><input type="number" x-model.number="modal.cfg.defaults.port" class="mono" readonly>
+            <div class="hint">Auto-allocated from the 8001–8099 pool on Approve.</div></div>
+          <div class="group-title">Mods (applied at launch)</div>
+          <div class="check"><input type="checkbox" :checked="isMod('mods/fix-sleep-wake-mamba')" @change="toggleMod('mods/fix-sleep-wake-mamba')">
+            <span>fix-sleep-wake-mamba</span><span class="hint">— required for Mamba/GDN-hybrid + quantized KV cache (wake crashes without it)</span></div>
+          <div class="group-title">vLLM command template</div>
+          <div class="field"><label>Command (advanced)</label><textarea x-model="modal.cfg.command"></textarea>
+            <div class="hint">Full <span class="mono">vllm serve</span> invocation. Keep <span class="mono">{host} {port} {gpu_memory_utilization} {max_model_len} {tensor_parallel}</span> as braced placeholders.</div></div>
+        </div>
+      </template>
+    </div>
+    <div class="modal-foot">
+      <span class="modal-status" :class="modal.statusType" x-text="modal.status"></span>
+      <button @click="closeEdit()">Cancel</button>
+      <button class="primary" @click="saveEdit()" :disabled="modal.saving||!modal.cfg" x-text="modal.saving?'Saving…':'Save'">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Log modal -->
+<div class="overlay" x-show="logModal.open" x-transition.opacity style="display:none" @keydown.escape.window="closeLog()">
+  <div class="modal-panel log-panel" @click.away="closeLog()">
+    <div class="modal-head"><span>Logs — <b x-text="logModal.name"></b></span>
+      <button class="x" @click="closeLog()" aria-label="Close">×</button></div>
+    <div class="log-tools">
+      <input type="text" placeholder="Search…" x-model="logModal.search">
+      <label class="toggle"><input type="checkbox" x-model="logModal.filter"> Filter noise</label>
+      <label class="toggle"><input type="checkbox" x-model="logModal.live" @change="toggleLive()"> Live</label>
+      <button @click="refreshLog()" :disabled="logModal.loading" x-text="logModal.loading?'…':'Refresh'"></button>
+    </div>
+    <pre class="log-area" x-text="logText()"></pre>
+    <div class="log-meta"><span x-text="logModal.path"></span><span x-text="logMeta()"></span></div>
+  </div>
+</div>
+
+<!-- Chat modal -->
+<div class="overlay" x-show="chatModal.open" x-transition.opacity style="display:none" @keydown.escape.window="closeChat()">
+  <div class="modal-panel chat-panel" @click.away="closeChat()">
+    <div class="modal-head"><span>Chat — <b x-text="chatModal.name"></b></span>
+      <button class="x" @click="closeChat()" aria-label="Close">×</button></div>
+    <div class="chat-tools">
+      <input class="sys" type="text" placeholder="System prompt (optional)" x-model="chatModal.system">
+      <label>Max tokens</label><input type="number" x-model.number="chatModal.maxTokens" style="width:70px">
+      <button @click="clearChat()">Clear</button>
+    </div>
+    <div class="chat-msgs">
+      <template x-for="(m,i) in chatModal.messages" :key="i">
+        <div class="msg" :class="m.role">
+          <div class="role" x-text="m.role"></div>
+          <div class="reasoning" x-show="m.reasoning" x-text="m.reasoning"></div>
+          <div><span x-text="m.content"></span><span class="cursor" x-show="chatModal.loading && i===chatModal.messages.length-1 && m.role==='assistant'"></span></div>
+        </div>
+      </template>
+      <div class="chat-empty" x-show="chatModal.messages.length===0">Send a message to test the model. Streaming is on.</div>
+      <div class="err" x-show="chatModal.error" x-text="chatModal.error"></div>
+    </div>
+    <div class="chat-input">
+      <textarea x-model="chatModal.input" @keydown.enter.prevent="event.shiftKey||sendChat()" placeholder="Message… (Enter to send, Shift+Enter for newline)"></textarea>
+      <button class="primary" @click="sendChat()" :disabled="chatModal.loading||!chatModal.input.trim()" x-text="chatModal.loading?'…':'Send'">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function mgr(){return{
+  models:[],busy:[],memTotal:0,memUsed:0,memAvail:0,cpuPct:0,gpuPct:0,benchResults:{},benchmarking:[],sysOs:"",sysGpu:"",sysCuda:"",sysVllm:"",sysDocker:"",sysArch:"",sysUptime:0,newId:'',researching:false,researchErr:'',importing:false,
+  modal:{open:false,name:'',cfg:null,loading:false,saving:false,status:'',statusType:'',dirty:false,served:'',aliases:''},
+  logModal:{open:false,name:'',raw:'',path:'',filter:true,search:'',live:false,loading:false,timer:null},
+  chatModal:{open:false,name:'',messages:[],input:'',loading:false,system:'',maxTokens:512,error:''},
+  isBusy(n){return this.busy.includes(n)},
+  memPct(){return this.memTotal?Math.min(100,this.memUsed/this.memTotal*100).toFixed(0):0},
+  sysInfo(){let h=Math.floor(this.sysUptime/3600),m=Math.floor((this.sysUptime%3600)/60);let up=h>0?h+"h"+m+"m":m+"m";let v=this.sysVllm?this.sysVllm.split("+")[0].replace(".dev24",""):"";let c=this.sysCuda?this.sysCuda.split(".")[0]:"";return[this.sysOs,this.sysGpu,c?"CUDA "+c:"",v?"vLLM "+v:"","▲ "+up,this.sysArch].filter(Boolean).join(" · ");},
+  running(){return this.models.filter(m=>!['STOPPED','PENDING','DISCOVERED'].includes(m.state))},
+  available(){return this.models.filter(m=>m.state==='STOPPED')},
+  pending(){return this.models.filter(m=>m.state==='PENDING')},
+  discovered(){return this.models.filter(m=>m.state==='DISCOVERED')},
+  async poll(){try{const[s,sys]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/system').then(r=>r.json())]);
+    this.models=s.models;this.memTotal=sys.mem_total_gb;this.memUsed=sys.mem_used_gb;this.memAvail=sys.mem_available_gb;this.cpuPct=sys.cpu_percent;this.gpuPct=sys.gpu_percent;this.sysOs=sys.sys_os;this.sysGpu=sys.sys_gpu;this.sysCuda=sys.sys_cuda_driver;this.sysVllm=sys.sys_vllm;this.sysDocker=sys.sys_docker;this.sysArch=sys.sys_arch;this.sysUptime=sys.uptime_seconds;
+  }catch(e){}setTimeout(()=>this.poll(),2000)},
+  async act(name,op){const b=event&&event.target;if(b)b.disabled=true;try{await fetch('/api/'+name+'/'+op,{method:'POST'})}catch(e){}this.poll()},
+  async runBenchmark(name){this.benchmarking.push(name);try{const r=await fetch('/api/'+name+'/benchmark',{method:'POST'});const d=await r.json();if(r.ok)this.benchResults[name]=d;else alert(d.error||'benchmark failed')}catch(e){alert(e.message)}this.benchmarking=this.benchmarking.filter(n=>n!==name);this.poll()},
+  async del(name){if(!confirm('Delete '+name+'?\nThis stops the container and deletes the cached weights from disk.'))return;await fetch('/api/models/'+name,{method:'DELETE'});this.poll()},
+  async importCached(){this.importing=true;try{const r=await fetch('/api/import-cached',{method:'POST'});const d=await r.json();
+    alert('Imported '+d.added+' new, skipped '+d.skipped+' already known.');this.poll()}catch(e){alert(e.message)}this.importing=false},
+  async research(){this.researchErr='';this.researching=true;
+    try{const r=await fetch('/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:this.newId})});
+      const d=await r.json();if(!r.ok){this.researchErr=d.error||'failed'}else{this.newId='';this.poll();alert('Researched '+d.name+'. Review in Pending.')}}
+    catch(e){this.researchErr=e.message}this.researching=false},
+  async researchExisting(name){if(!this.busy.includes(name))this.busy.push(name);
+    try{const r=await fetch('/api/models/'+name+'/research',{method:'POST'});const d=await r.json();
+      if(!r.ok){alert(d.error||'failed')}else{this.poll();alert('Researched '+name+'.\\n'+(d.notes||''))}}
+    catch(e){alert(e.message)}finally{this.busy=this.busy.filter(function(n){return n!==name});this.poll()}},
+  async approve(name){const r=await fetch('/api/models/'+name+'/approve',{method:'POST'});const d=await r.json();if(!r.ok)alert(d.error);else this.poll()},
+  // ---- edit modal ----
+  isMod(m){return this.modal.cfg&&Array.isArray(this.modal.cfg.mods)&&this.modal.cfg.mods.includes(m)},
+  toggleMod(m){if(!this.modal.cfg)return;this.modal.cfg.mods=this.modal.cfg.mods||[];var i=this.modal.cfg.mods.indexOf(m);
+    if(i>=0){this.modal.cfg.mods.splice(i,1)}else{this.modal.cfg.mods.push(m)}this.modal.dirty=true},
+  async openEdit(name){this.modal={open:true,name:name,cfg:null,loading:true,saving:false,status:'',statusType:'',dirty:false,served:'',aliases:''};
+    try{const r=await fetch('/api/models/'+name);const m=await r.json();
+      if(!r.ok){this.modal.status='Load failed: '+(m.error||'');this.modal.statusType='err';this.modal.loading=false;return}
+      this.modal.cfg=m.config;this.modal.served=(m.config.served_model_names||[]).join(', ');this.modal.aliases=(m.config.aliases||[]).join(', ');
+      this.modal.cfg.defaults=this.modal.cfg.defaults||{};this.modal.cfg.mods=this.modal.cfg.mods||[];this.modal.loading=false;
+    }catch(e){this.modal.status='Load failed: '+e.message;this.modal.statusType='err';this.modal.loading=false}},
+  closeEdit(){if(this.modal.dirty&&!confirm('Discard unsaved changes?'))return;this.modal.open=false;this.modal.cfg=null;this.modal.dirty=false;this.modal.status=''},
+  async saveEdit(){if(!this.modal.cfg)return;this.modal.saving=true;this.modal.status='Saving…';this.modal.statusType='';
+    this.modal.cfg.served_model_names=this.modal.served.split(',').map(function(s){return s.trim()}).filter(Boolean);
+    this.modal.cfg.aliases=this.modal.aliases.split(',').map(function(s){return s.trim()}).filter(Boolean);
+    try{const r=await fetch('/api/models/'+this.modal.name+'/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.modal.cfg)});
+      if(!r.ok){const d=await r.json().catch(function(){return{}});this.modal.status='Save failed: '+(d.error||r.status);this.modal.statusType='err';this.modal.saving=false;return}
+      this.modal.status='Saved';this.modal.statusType='ok';this.modal.dirty=false;this.modal.saving=false;this.poll();
+      var self=this;setTimeout(function(){self.modal.open=false},900);
+    }catch(e){this.modal.status='Save failed: '+e.message;this.modal.statusType='err';this.modal.saving=false}},
+  // ---- log modal ----
+  async openLog(name){this.logModal.open=true;this.logModal.name=name;this.logModal.raw='';this.logModal.path='';this.logModal.search='';this.logModal.loading=true;
+    await this.refreshLog();if(this.logModal.live)this.startLive()},
+  async refreshLog(){if(!this.logModal.name)return;this.logModal.loading=true;
+    try{const r=await fetch('/api/models/'+this.logModal.name+'/log?lines=2000');const d=await r.json();
+      if(!r.ok){this.logModal.raw='Error: '+(d.error||r.status);this.logModal.path=''}else{this.logModal.raw=d.text;this.logModal.path=d.path}
+    }catch(e){this.logModal.raw='Fetch failed: '+e.message}this.logModal.loading=false;
+    var el=document.querySelector('.log-area');if(el)el.scrollTop=el.scrollHeight},
+  logText(){if(!this.logModal.raw)return this.logModal.loading?'Loading…':'(empty)';
+    var lines=this.logModal.raw.split('\n');
+    if(this.logModal.filter){lines=lines.filter(function(l){return !/\/health|\/is_sleeping|POST \/sleep|POST \/wake_up|GET \/v1\/models/.test(l)})}
+    if(this.logModal.search){var q=this.logModal.search.toLowerCase();lines=lines.filter(function(l){return l.toLowerCase().indexOf(q)>=0})}
+    if(lines.length>1200){lines=lines.slice(-1200)}
+    return lines.join('\n')},
+  logMeta(){var lines=this.logModal.raw?this.logModal.raw.split('\n').length:0;var shown=this.logText().split('\n').length;return shown+' / '+lines+' lines'},
+  toggleLive(){if(this.logModal.live){this.startLive()}else{this.stopLive()}},
+  startLive(){this.stopLive();var self=this;this.logModal.timer=setInterval(function(){self.refreshLog()},2500)},
+  stopLive(){if(this.logModal.timer){clearInterval(this.logModal.timer);this.logModal.timer=null}},
+  closeLog(){this.stopLive();this.logModal.open=false},
+  // ---- chat modal ----
+  openChat(name){this.chatModal={open:true,name:name,messages:[],input:'',loading:false,system:'',maxTokens:512,error:''}},
+  closeChat(){this.chatModal.open=false},
+  clearChat(){this.chatModal.messages=[];this.chatModal.error=''},
+  scrollChat(){var el=document.querySelector('.chat-msgs');if(el)el.scrollTop=el.scrollHeight},
+  async sendChat(){var text=this.chatModal.input.trim();if(!text||this.chatModal.loading)return;
+    this.chatModal.error='';this.chatModal.messages.push({role:'user',content:text});this.chatModal.input='';this.chatModal.loading=true;
+    this.chatModal.messages.push({role:'assistant',content:'',reasoning:''});var idx=this.chatModal.messages.length-1;this.scrollChat();
+    var msgs=this.chatModal.messages.slice(0,idx).map(function(m){return{role:m.role,content:m.content}});
+    if(this.chatModal.system)msgs.unshift({role:'system',content:this.chatModal.system});
+    var body={model:this.chatModal.name,messages:msgs,stream:true,max_tokens:parseInt(this.chatModal.maxTokens)||512};
+    try{var r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!r.ok){var e=await r.json().catch(function(){return{}});this.chatModal.error=(e.error&&e.error.message)||('HTTP '+r.status);this.chatModal.messages[idx].content='[error]';this.chatModal.loading=false;return}
+      var reader=r.body.getReader();var dec=new TextDecoder();var buf='';
+      while(true){var ch=await reader.read();if(ch.done)break;buf+=dec.decode(ch.value,{stream:true});
+        var parts=buf.split('\n');buf=parts.pop();
+        for(var i=0;i<parts.length;i++){var ln=parts[i];if(ln.indexOf('data:')!==0)continue;var data=ln.slice(5).trim();if(data==='[DONE]')continue;
+          try{var j=JSON.parse(data);var delta=j.choices&&j.choices[0]&&j.choices[0].delta||{};
+            if(delta.reasoning_content)this.chatModal.messages[idx].reasoning+=delta.reasoning_content; if(delta.reasoning)this.chatModal.messages[idx].reasoning+=delta.reasoning;
+            if(delta.content)this.chatModal.messages[idx].content+=delta.content;
+          }catch(pe){}}}
+    }catch(e){this.chatModal.error=e.message;this.chatModal.messages[idx].content='[error]'}
+    this.chatModal.loading=false;this.scrollChat();
+  },
+}}
+</script>
+</body>
+</html>

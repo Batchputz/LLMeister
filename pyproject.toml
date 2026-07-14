@@ -1,0 +1,19 @@
+[project]
+name = "llmeister"
+version = "0.1.0"
+description = "LLMeister — centralized vLLM lifecycle manager (sleep/wake hot-swap, memory-aware scheduling, dashboard, new-model research agent). vLLM is the only hard dependency."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "docker>=7.1",
+    "psutil>=6.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+llmeister = "manager:main"
+
+[tool.uv]
+package = false
