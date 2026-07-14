@@ -14,6 +14,8 @@ import re
 log = logging.getLogger("launcher")
 import shlex
 import subprocess
+import threading
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,68 @@ DOCKER = "/usr/bin/docker"
 
 def _ensure_dirs() -> None:
     RECIPE_OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ── FIFO-based log capture ──────────────────────────────────────────────
+# run-recipe.py writes to a FIFO; a reader thread writes to the log file.
+# If the log file is deleted, the reader reopens it. The FIFO is stable.
+
+_fifo_dir = PROJECT_ROOT / "fifos"
+_fifo_dir.mkdir(parents=True, exist_ok=True)
+
+_log_readers: dict[str, threading.Event] = {}
+
+
+def _start_fifo_log(name: str, log_path: Path) -> Path:
+    """Create a FIFO and start a reader thread. Returns the FIFO path."""
+    fifo_path = _fifo_dir / f"{name}.fifo"
+    # Remove stale FIFO
+    if fifo_path.exists():
+        fifo_path.unlink()
+    os.mkfifo(fifo_path)
+
+    stop_event = threading.Event()
+
+    def _reader():
+        """Read from FIFO, write to log file. Reopens log file if deleted."""
+        while not stop_event.is_set():
+            try:
+                fifo_fd = os.open(str(fifo_path), os.O_RDONLY | os.O_NONBLOCK)
+                os.close(fifo_fd)
+                # Open FIFO in blocking mode for reading
+                with open(fifo_path, "r") as fifo:
+                    while not stop_event.is_set():
+                        line = fifo.readline()
+                        if not line:
+                            break  # writer closed
+                        # Write to log file (reopen if deleted)
+                        try:
+                            with open(log_path, "a") as logf:
+                                logf.write(line)
+                                logf.flush()
+                        except OSError:
+                            log_path.parent.mkdir(parents=True, exist_ok=True)
+            except (OSError, IOError):
+                pass
+            if not stop_event.is_set():
+                stop_event.wait(2)
+
+    thread = threading.Thread(target=_reader, daemon=True, name=f"log-reader-{name}")
+    thread.start()
+    _log_readers[name] = stop_event
+    return fifo_path
+
+
+def _stop_fifo_log(name: str) -> None:
+    """Stop the reader thread and remove the FIFO."""
+    if name in _log_readers:
+        _log_readers.pop(name).set()
+    fifo_path = _fifo_dir / f"{name}.fifo"
+    if fifo_path.exists():
+        try:
+            fifo_path.unlink()
+        except OSError:
+            pass
 
 
 def _normalize_command(cmd: str) -> str:
@@ -90,12 +154,14 @@ def launch(name: str, config: dict[str, Any], container_name: str) -> subprocess
     # run-recipe.py is a foreground supervisor; run it detached from the manager
     # so the manager stays responsive. Its stdout/stderr go to a log file.
     log_path = RECIPE_OUT_DIR / f"{name}.launch.log"
-    log_f = open(log_path, "ab", buffering=0)
+    # Use FIFO-based log capture so the log file can be recreated if deleted
+    fifo_path = _start_fifo_log(name, log_path)
+    fifo_f = open(fifo_path, "w", buffering=1)
     proc = subprocess.Popen(
         cmd,
         cwd=str(SPARK_VLLM_DIR),
         env=env,
-        stdout=log_f,
+        stdout=fifo_f,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
@@ -104,6 +170,8 @@ def launch(name: str, config: dict[str, Any], container_name: str) -> subprocess
 
 def stop(container_name: str, timeout: int = 30) -> bool:
     """Stop and remove a container. Returns True if it was running and is now gone."""
+    name = container_name.replace("vllm_mgr_", "")
+    _stop_fifo_log(name)
     try:
         subprocess.run(
             [DOCKER, "stop", "-t", str(timeout), container_name],
