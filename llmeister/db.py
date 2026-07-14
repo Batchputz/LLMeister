@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS models (
@@ -47,9 +48,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 
 _UNSET = object()
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent / "llmeister.db"
-RECIPE_DIR = Path("/home/batchputz/spark-vllm-docker/recipes")
-LLAMA_SWAP_CONFIG = Path("/home/batchputz/llama-swap/config.yaml")
+from llmeister import PROJECT_ROOT
+DEFAULT_DB_PATH = PROJECT_ROOT / "llmeister.db"
+RECIPE_DIR = Path(config.load().get("paths", {}).get("recipe_dir", "/home/batchputz/spark-vllm-docker/recipes"))
+LLAMA_SWAP_CONFIG = Path(config.load().get("paths", {}).get("llama_swap_config", "/home/batchputz/llama-swap/config.yaml"))
 
 # Recipes to seed, mapped to a canonical name. Port comes from each recipe's defaults.
 SEED_RECIPES = {

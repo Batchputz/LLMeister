@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import yaml
 
-import config
+from . import config
 
 log = logging.getLogger("research")
 

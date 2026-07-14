@@ -1,6 +1,13 @@
 # LLMeister — single source of truth for SYSTEM config.
 # Per-MODEL config lives in the SQLite registry (db.py). Nothing here is hardcoded in code.
 
+# Deployment-specific paths (the vLLM launch infrastructure).
+# On a non-DGX-Spark system, point these to your vLLM recipe/launch setup.
+paths:
+  spark_vllm_dir: "/home/batchputz/spark-vllm-docker"   # run-recipe.py + mods/ live here
+  recipe_dir: "/home/batchputz/spark-vllm-docker/recipes" # seed recipe YAMLs
+  llama_swap_config: "/home/batchputz/llama-swap/config.yaml"  # legacy, for seeding
+
 manager:
   host: "0.0.0.0"
   port: 9001            # the manager's API + dashboard. 8XXX reserved for vLLM backends.

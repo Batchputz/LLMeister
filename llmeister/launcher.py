@@ -20,9 +20,11 @@ from typing import Any
 
 import yaml
 
-SPARK_VLLM_DIR = Path("/home/batchputz/spark-vllm-docker")
+from . import config
+SPARK_VLLM_DIR = Path(config.load().get("paths", {}).get("spark_vllm_dir", "/home/batchputz/spark-vllm-docker"))
 RUN_RECIPE = SPARK_VLLM_DIR / "run-recipe.py"
-RECIPE_OUT_DIR = Path(__file__).resolve().parent / "generated-recipes"
+from llmeister import PROJECT_ROOT
+RECIPE_OUT_DIR = PROJECT_ROOT / "generated-recipes"
 DOCKER = "/usr/bin/docker"
 
 

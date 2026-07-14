@@ -8,7 +8,7 @@ WorkingDirectory=/home/batchputz/spark-vllm-docker/llmeister
 Environment=HOME=/home/batchputz
 Environment=PATH=/home/batchputz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-%h/.config/llmeister.env
-ExecStart=/home/batchputz/.local/bin/uv run python manager.py
+ExecStart=/home/batchputz/.local/bin/uv run python -m llmeister
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=on-failure
 RestartSec=10

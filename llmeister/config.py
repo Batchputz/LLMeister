@@ -6,7 +6,8 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+from llmeister import PROJECT_ROOT
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 
 @lru_cache(maxsize=1)

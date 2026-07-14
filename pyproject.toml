@@ -13,7 +13,14 @@ dependencies = [
 ]
 
 [project.scripts]
-llmeister = "manager:main"
+llmeister = "llmeister.manager:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools]
+packages = ["llmeister"]
 
 [tool.uv]
-package = false
+package = true

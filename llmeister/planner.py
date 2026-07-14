@@ -21,8 +21,8 @@ import logging
 import psutil
 from typing import Any, TYPE_CHECKING
 
-import config
-import db
+from . import config
+from . import db
 
 if TYPE_CHECKING:
     import lifecycle as lc

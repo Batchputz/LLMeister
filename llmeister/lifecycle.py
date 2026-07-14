@@ -15,9 +15,9 @@ from typing import Any
 
 import httpx
 
-import db
-import launcher
-import planner as planner_mod
+from . import db
+from . import launcher
+from . import planner as planner_mod
 
 log = logging.getLogger("lifecycle")
 

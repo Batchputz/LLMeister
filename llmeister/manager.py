@@ -16,14 +16,14 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-import config
-import db
-import launcher
-import benchmark
+from . import config
+from . import db
+from . import launcher
+from . import benchmark
 import threading
 import time as _time
 import subprocess
-import lifecycle as lc
+from . import lifecycle as lc
 import research
 
 log = logging.getLogger("manager")
@@ -442,7 +442,8 @@ async def api_research_existing(name: str) -> dict:
 
 
 # ---- static dashboard ----
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+from llmeister import PROJECT_ROOT
+STATIC_DIR = PROJECT_ROOT / "static"
 
 
 class NoCacheStatic(StaticFiles):
