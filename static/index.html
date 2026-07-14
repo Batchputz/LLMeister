@@ -87,6 +87,16 @@
   .mpill.off{opacity:.35}
   .mpill.off::before{opacity:.3}
   #metricsChart{width:100%;height:calc(82vh - 220px);min-height:300px;flex:1}
+  .opt-panel{max-width:700px;display:flex;flex-direction:column;max-height:90vh}
+  .opt-progress{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-bottom:12px}
+  .opt-progress b{color:var(--txt);font-family:ui-monospace,monospace}
+  .opt-timeline{flex:1;overflow-y:auto;background:#0c0e12;border-radius:8px;padding:10px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.8}
+  .opt-step{display:flex;gap:8px;align-items:center;padding:2px 0}
+  .opt-step .step-num{color:var(--mut);min-width:30px}
+  .opt-step.kept{color:#c8ffd9}
+  .opt-step.reverted{color:var(--mut);opacity:.7}
+  .opt-step .score{margin-left:auto;color:var(--acc);font-weight:600}
+  .opt-step.kept .score{color:var(--ok)}
   .chat-tools{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid #262a33;flex-wrap:wrap}
   .chat-tools input{background:var(--panel2);border:1px solid #2c313c;color:var(--txt);border-radius:6px;padding:5px 8px;font-size:11px}
   .chat-tools input.sys{flex:1;min-width:120px}
@@ -109,7 +119,7 @@
 </head>
 <body x-data="mgr()" x-init="poll()">
 <header>
-  <h1>LLMeister <span class="ver">v10</span></h1>
+  <h1>LLMeister <span class="ver">v11</span></h1>
   <div class="res-bars">
     <div class="mem"><span>RAM</span><div class="bar"><i :style="`width:${memPct()}%`"></i></div><span class="val"><b x-text="memUsed"></b>/<b x-text="memTotal"></b>GB</span></div>
     <div class="mem"><span>CPU</span><div class="bar"><i :style="`width:${cpuPct}%;background:linear-gradient(90deg,#60a5fa,#818cf8)`"></i></div><span class="val"><b x-text="cpuPct"></b>%</span></div>
@@ -236,6 +246,7 @@
     </div>
     <div class="modal-foot">
       <span class="modal-status" :class="modal.statusType" x-text="modal.status"></span>
+      <button @click="openOptimize(modal.name)">🔧 Optimize</button>
       <button @click="closeEdit()">Cancel</button>
       <button class="primary" @click="saveEdit()" :disabled="modal.saving||!modal.cfg" x-text="modal.saving?'Saving…':'Save'">Save</button>
     </div>
@@ -314,6 +325,44 @@
   </div>
 </div>
 
+<div class="overlay" x-show="optModal.open" x-transition.opacity style="display:none" @keydown.escape.window="closeOptimize()">
+  <div class="modal-panel opt-panel" @click.away="closeOptimize()">
+    <div class="modal-head"><span>🔧 Parameter Optimization — <b x-text="optModal.name"></b></span>
+      <button class="x" @click="closeOptimize()" aria-label="Close">×</button></div>
+    <div x-show="optModal.status==='idle'" style="padding:14px">
+      <div class="chat-empty">Describe your workload to start optimization.<br>e.g. "batch processing, 64 parallel requests, ~8000 tokens each, ~500 token outputs"</div>
+      <div class="chat-msgs" style="min-height:120px;max-height:280px">
+        <template x-for="(m,i) in optModal.messages" :key="i">
+          <div class="msg" :class="m.role"><div class="role" x-text="m.role"></div><div x-text="m.content"></div></div>
+        </template>
+      </div>
+      <div class="chat-input">
+        <input type="text" x-model="optModal.input" @keydown.enter="sendOptMessage()" placeholder="Describe your workload...">
+        <button class="primary" @click="sendOptMessage()" :disabled="optModal.loading" x-text="optModal.loading?'…':'Send'">Send</button>
+      </div>
+    </div>
+    <div x-show="optModal.status!=='idle'" style="padding:14px;display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div class="opt-progress">
+        <span>Status: <b x-text="optModal.status"></b></span>
+        <span>Step: <b x-text="optModal.currentStep"></b>/30</span>
+        <span>Baseline: <b x-text="optModal.baselineScore"></b></span>
+        <span>Best: <b x-text="optModal.bestScore"></b></span>
+      </div>
+      <div class="opt-timeline">
+        <template x-for="s in optModal.history" :key="s.step">
+          <div class="opt-step" :class="s.kept?'kept':'reverted'">
+            <span class="step-num">#<span x-text="s.step"></span></span>
+            <span x-text="(s.parameter||'baseline')+(s.new_value?(' '+s.old_value+'→'+s.new_value):'')"></span>
+            <span class="score" x-text="s.score"></span>
+            <span x-text="s.kept?'✓':(s.step>0?'✗':'')"></span>
+          </div>
+        </template>
+      </div>
+      <div style="margin-top:10px"><button class="danger" @click="stopOptimize()" x-show="optModal.status==='running'">Stop Optimization</button></div>
+    </div>
+  </div>
+</div>
+
 <script>
 function mgr(){return{
   models:[],busy:[],memTotal:0,memUsed:0,memAvail:0,cpuPct:0,gpuPct:0,benchResults:{},benchmarking:[],sysOs:"",sysGpu:"",sysCuda:"",sysVllm:"",sysDocker:"",sysArch:"",sysUptime:0,newId:'',researching:false,researchErr:'',importing:false,
@@ -321,6 +370,7 @@ function mgr(){return{
   logModal:{open:false,name:'',raw:'',path:'',filter:true,search:'',live:false,loading:false,timer:null},
   chatModal:{open:false,name:'',messages:[],input:'',loading:false,system:'',maxTokens:512,error:''},
   metricsModal:{open:false,name:'',data:null,loading:false,error:''},metricsVisible:{prompt:true,generation:true,running:true,waiting:true,gpu_kv:true,prefix:true,mm:true},
+  optModal:{open:false,name:'',messages:[],input:'',loading:false,status:'idle',history:[],currentStep:0,bestScore:0,baselineScore:0,pollTimer:null},
   isBusy(n){return this.busy.includes(n)},
   memPct(){return this.memTotal?Math.min(100,this.memUsed/this.memTotal*100).toFixed(0):0},
   sysInfo(){let h=Math.floor(this.sysUptime/3600),m=Math.floor((this.sysUptime%3600)/60);let up=h>0?h+"h"+m+"m":m+"m";let v=this.sysVllm?this.sysVllm.split("+")[0].replace(".dev24",""):"";let c=this.sysCuda?this.sysCuda.split(".")[0]:"";return[this.sysOs,this.sysGpu,c?"CUDA "+c:"",v?"vLLM "+v:"","▲ "+up,this.sysArch].filter(Boolean).join(" · ");},
@@ -403,6 +453,23 @@ function mgr(){return{
     }catch(e){this.metricsModal.loading=false;this.metricsModal.error=e.message}
   },
   closeMetrics(){this.metricsModal.open=false},
+  openOptimize(name){this.optModal={open:true,name:name,messages:[],input:'',loading:false,status:'idle',history:[],currentStep:0,bestScore:0,baselineScore:0,pollTimer:null};this.pollOptimize()},
+  closeOptimize(){this.optModal.open=false;if(this.optModal.pollTimer)clearTimeout(this.optModal.pollTimer)},
+  async sendOptMessage(){var text=this.optModal.input.trim();if(!text||this.optModal.loading)return;
+    this.optModal.messages.push({role:'user',content:text});this.optModal.input='';this.optModal.loading=true;
+    try{var r=await fetch('/api/'+this.optModal.name+'/optimize/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});
+    var d=await r.json();if(d.reply)this.optModal.messages.push({role:'assistant',content:d.reply});
+    if(d.status&&typeof d.status==='object')this.optModal.status='running';else this.optModal.status='idle';
+    }catch(e){this.optModal.messages.push({role:'assistant',content:'Error: '+e.message})}
+    this.optModal.loading=false},
+  async pollOptimize(){if(!this.optModal.open)return;
+    try{var r=await fetch('/api/'+this.optModal.name+'/optimize/status');var d=await r.json();
+    if(d.status!=='not_started'){this.optModal.status=d.status;this.optModal.currentStep=d.current_step||0;
+    this.optModal.bestScore=d.best_score||0;this.optModal.baselineScore=d.baseline_score||0;
+    var hr=await fetch('/api/'+this.optModal.name+'/optimize/history');var hd=await hr.json();this.optModal.history=hd.steps;}
+    }catch(e){}
+    this.optModal.pollTimer=setTimeout(()=>this.pollOptimize(),3000)},
+  stopOptimize(){fetch('/api/'+this.optModal.name+'/optimize/stop',{method:'POST'})},
   toggleMetric(key){this.metricsVisible[key]=!this.metricsVisible[key];this.renderMetricsChart();},
   renderMetricsChart(){
     if(!window.Plotly||!this.metricsModal.data)return;

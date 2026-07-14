@@ -21,6 +21,8 @@ from . import db
 from . import launcher
 from . import benchmark
 from . import metrics
+from . import optimizer_db as optdb
+from . import optimizer as opt_mod
 import threading
 import time as _time
 import subprocess
@@ -31,6 +33,7 @@ log = logging.getLogger("manager")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 MGR = lc.LifecycleManager()
+_OPT_AGENTS: dict[str, opt_mod.OptimizationAgent] = {}
 
 # --- resource monitor (cpu/gpu) ---
 _cpu_pct = 0.0
@@ -293,6 +296,76 @@ async def api_metrics(name: str) -> dict:
     if not log_path.exists():
         return JSONResponse({"error": "no launch log for this model"}, status_code=404)
     return metrics.parse_engine_stats(log_path)
+
+
+# ---- /api parameter optimization ----
+
+@app.post("/api/{name}/optimize/start")
+async def api_optimize_start(name: str, req: Request) -> dict:
+    payload = await req.json()
+    message = payload.get("message", "")
+    if not message:
+        return JSONResponse({"error": "message required"}, status_code=400)
+    if name not in _OPT_AGENTS:
+        _OPT_AGENTS[name] = opt_mod.OptimizationAgent(MGR, name)
+    agent = _OPT_AGENTS[name]
+    reply = await agent.interview(message)
+    return {"reply": reply, "status": agent.workload if agent.workload else "interview"}
+
+
+@app.get("/api/{name}/optimize/status")
+async def api_optimize_status(name: str) -> dict:
+    conn = db.connect(); db.init_db(conn); optdb.init_optimizer_db(conn)
+    run = optdb.get_active_run(conn, name)
+    if not run:
+        conn.close()
+        return {"status": "not_started"}
+    agent = _OPT_AGENTS.get(name)
+    current_step = agent.current_step if agent else 0
+    best_score = agent.best_score if agent else 0
+    baseline_score = agent.baseline_score if agent else 0
+    conn.close()
+    return {
+        "status": run["status"],
+        "current_step": current_step,
+        "total_steps": run.get("total_steps", 0),
+        "best_score": round(best_score, 1),
+        "baseline_score": round(baseline_score, 1),
+        "improvement_pct": round(((best_score - baseline_score) / baseline_score * 100) if baseline_score > 0 else 0, 1),
+    }
+
+
+@app.get("/api/{name}/optimize/history")
+async def api_optimize_history(name: str) -> dict:
+    conn = db.connect(); db.init_db(conn); optdb.init_optimizer_db(conn)
+    run = optdb.get_active_run(conn, name)
+    if not run:
+        conn.close()
+        return {"steps": []}
+    steps = optdb.get_steps(conn, run["id"])
+    conn.close()
+    return {
+        "steps": [{
+            "step": s["step_number"],
+            "parameter": s.get("parameter"),
+            "old_value": s.get("old_value"),
+            "new_value": s.get("new_value"),
+            "score": round(s.get("score", 0), 1) if s.get("score") else 0,
+            "improvement": s.get("is_improvement", 0),
+            "kept": s.get("kept", 0),
+            "reasoning": s.get("reasoning", ""),
+            "benchmark": s.get("benchmark"),
+        } for s in steps],
+    }
+
+
+@app.post("/api/{name}/optimize/stop")
+async def api_optimize_stop(name: str) -> dict:
+    agent = _OPT_AGENTS.get(name)
+    if agent:
+        agent.stop()
+        return {"ok": True, "message": "stop requested"}
+    return {"ok": False, "message": "no active agent"}
 
 
 # ---- /api new-model research ----

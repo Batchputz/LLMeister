@@ -183,6 +183,12 @@ def list_models(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def set_config(conn: sqlite3.Connection, name: str, config_json: str) -> None:
+    """Update the config JSON for a model."""
+    conn.execute("UPDATE models SET config=?, updated_at=? WHERE name=?", (config_json, time.time(), name))
+    conn.commit()
+
+
 def get_model(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM models WHERE name = ?", (name,)).fetchone()
     return dict(row) if row else None
