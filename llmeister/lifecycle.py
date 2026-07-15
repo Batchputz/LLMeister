@@ -53,6 +53,25 @@ class VLLMClient:
         except Exception:
             return False
 
+    async def ready(self) -> bool:
+        """Check if the model is fully loaded and the inference API is ready.
+
+        /health returns 200 as soon as the HTTP server starts, but the model
+        weights may still be loading. /v1/models only lists models once they
+        are fully loaded and ready to serve. This is the correct readiness
+        signal for benchmarking.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT) as c:
+                r = await c.get(f"{self.base}/v1/models")
+                if r.status_code != 200:
+                    return False
+                data = r.json()
+                # vLLM only populates /v1/models when the model is fully loaded
+                return bool(data.get("data"))
+        except Exception:
+            return False
+
     async def is_sleeping(self) -> bool | None:
         try:
             async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT) as c:
@@ -197,12 +216,31 @@ class LifecycleManager:
             return ok
 
     async def _wait_health(self, client: VLLMClient, name: str) -> bool:
+        """Wait until the vLLM backend is ready to serve requests.
+
+        Two-phase: first wait for /health (HTTP server up, fast: ~30s),
+        then wait for /v1/models (model fully loaded, slow: 2-5 min for
+        a 9B model on cold start).
+        """
         elapsed = 0.0
-        while elapsed < START_MAX_WAIT:
+        # Phase 1: HTTP server up (INT4 model loading on ARM64 can take 3-5 min)
+        while elapsed < 300:  # 5 min max for server start
             if await client.health():
+                log.debug("%s HTTP server up after %.0fs", name, elapsed)
+                break
+            await asyncio.sleep(START_POLL_INTERVAL)
+            elapsed += START_POLL_INTERVAL
+        else:
+            log.warning("%s HTTP server never came up", name)
+            return False
+        # Phase 2: Model fully loaded (slow — wait the remaining budget)
+        while elapsed < START_MAX_WAIT:
+            if await client.ready():
+                log.debug("%s model ready after %.0fs", name, elapsed)
                 return True
             await asyncio.sleep(START_POLL_INTERVAL)
             elapsed += START_POLL_INTERVAL
+        log.warning("%s model did not become ready within %ds", name, START_MAX_WAIT)
         return False
 
     async def sleep_model(self, name: str, level: int = 1) -> bool:

@@ -329,7 +329,7 @@
   <div class="modal-panel opt-panel" @click.away="closeOptimize()">
     <div class="modal-head"><span>🔧 Parameter Optimization — <b x-text="optModal.name"></b></span>
       <button class="x" @click="closeOptimize()" aria-label="Close">×</button></div>
-    <div x-show="optModal.status==='idle'" style="padding:14px">
+    <div x-show="optModal.status==='idle' || optModal.status==='interview'" style="padding:14px">
       <div class="chat-empty">Describe your workload to start optimization.<br>e.g. "batch processing, 64 parallel requests, ~8000 tokens each, ~500 token outputs"</div>
       <div class="chat-msgs" style="min-height:120px;max-height:280px">
         <template x-for="(m,i) in optModal.messages" :key="i">
@@ -347,14 +347,33 @@
         <span>Step: <b x-text="optModal.currentStep"></b>/30</span>
         <span>Baseline: <b x-text="optModal.baselineScore"></b></span>
         <span>Best: <b x-text="optModal.bestScore"></b></span>
+        <span x-show="optModal.improvementPct>0" style="color:var(--ok)">+<b x-text="optModal.improvementPct"></b>%</span>
+      </div>
+      <div x-show="optModal.plan" style="margin-bottom:10px;background:var(--panel2);border:1px solid #2c313c;border-radius:8px;padding:10px">
+        <div style="font-size:11px;color:var(--mut);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">📋 Optimization Plan</div>
+        <div style="font-size:11px;color:var(--txt);margin-bottom:8px" x-text="optModal.plan?.goal"></div>
+        <template x-for="exp in (optModal.plan?.experiments||[])" :key="exp.id">
+          <div style="font-size:10px;color:var(--mut);padding:2px 0;font-family:ui-monospace,monospace">
+            <span style="color:var(--acc)">#<span x-text="exp.id"></span></span>
+            <span x-text="JSON.stringify(exp.change)"></span>
+            <span style="color:var(--mut)" x-text="' ('+exp.risk+')'"></span>
+            <span x-show="optModal.history.some(s=>s.experiment_id===exp.id)" :style="optModal.history.some(s=>s.experiment_id===exp.id&&s.kept)?'color:var(--ok)':'color:var(--err)'" x-text="optModal.history.some(s=>s.experiment_id===exp.id&&s.kept)?'✓ done':'✗ failed'"></span>
+          </div>
+        </template>
       </div>
       <div class="opt-timeline">
+        <div x-show="optModal.history.length===0" style="color:var(--mut);font-size:11px;padding:8px 0">
+          <span x-show="optModal.status==='researching'">🔍 Searching for optimization tips...</span>
+          <span x-show="optModal.status==='running' && optModal.currentStep===0">⏳ Running baseline measurement...</span>
+          <span x-show="optModal.status==='running' && optModal.currentStep>0">⏳ Testing parameter changes...</span>
+        </div>
         <template x-for="s in optModal.history" :key="s.step">
           <div class="opt-step" :class="s.kept?'kept':'reverted'">
             <span class="step-num">#<span x-text="s.step"></span></span>
             <span x-text="(s.parameter||'baseline')+(s.new_value?(' '+s.old_value+'→'+s.new_value):'')"></span>
             <span class="score" x-text="s.score"></span>
             <span x-text="s.kept?'✓':(s.step>0?'✗':'')"></span>
+            <span x-show="s.memory_estimate" style="color:var(--warn);font-size:9px" x-text="'⚠ '+s.memory_estimate"></span>
           </div>
         </template>
       </div>
@@ -453,7 +472,8 @@ function mgr(){return{
     }catch(e){this.metricsModal.loading=false;this.metricsModal.error=e.message}
   },
   closeMetrics(){this.metricsModal.open=false},
-  openOptimize(name){this.optModal={open:true,name:name,messages:[],input:'',loading:false,status:'idle',history:[],currentStep:0,bestScore:0,baselineScore:0,pollTimer:null};this.pollOptimize()},
+  openOptimize(name){this.optModal={open:true,name:name,messages:[],input:'',loading:false,status:'idle',history:[],currentStep:0,bestScore:0,baselineScore:0,improvementPct:0,plan:null,pollTimer:null};this.loadOptChat(name);this.pollOptimize()},
+  async loadOptChat(name){try{var r=await fetch('/api/'+name+'/optimize/chat');var d=await r.json();if(d.messages&&d.messages.length){this.optModal.messages=d.messages;this.optModal.status='interview';}}catch(e){}},
   closeOptimize(){this.optModal.open=false;if(this.optModal.pollTimer)clearTimeout(this.optModal.pollTimer)},
   async sendOptMessage(){var text=this.optModal.input.trim();if(!text||this.optModal.loading)return;
     this.optModal.messages.push({role:'user',content:text});this.optModal.input='';this.optModal.loading=true;
@@ -465,8 +485,8 @@ function mgr(){return{
   async pollOptimize(){if(!this.optModal.open)return;
     try{var r=await fetch('/api/'+this.optModal.name+'/optimize/status');var d=await r.json();
     if(d.status!=='not_started'){this.optModal.status=d.status;this.optModal.currentStep=d.current_step||0;
-    this.optModal.bestScore=d.best_score||0;this.optModal.baselineScore=d.baseline_score||0;
-    var hr=await fetch('/api/'+this.optModal.name+'/optimize/history');var hd=await hr.json();this.optModal.history=hd.steps;}
+    this.optModal.bestScore=d.best_score||0;this.optModal.baselineScore=d.baseline_score||0;this.optModal.improvementPct=d.improvement_pct||0;
+    var hr=await fetch('/api/'+this.optModal.name+'/optimize/history');var hd=await hr.json();this.optModal.history=hd.steps||[];if(hd.plan)this.optModal.plan=hd.plan;}
     }catch(e){}
     this.optModal.pollTimer=setTimeout(()=>this.pollOptimize(),3000)},
   stopOptimize(){fetch('/api/'+this.optModal.name+'/optimize/stop',{method:'POST'})},

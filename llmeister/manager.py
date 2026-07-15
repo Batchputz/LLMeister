@@ -144,6 +144,16 @@ def _hf_cache_dir_for(hf_model_id: str) -> Path:
 async def lifespan(app: FastAPI):
     with db.connect() as c:
         db.init_db(c)
+        optdb.init_optimizer_db(c)
+        # Recover zombie runs: any run left in "running" across a restart is dead.
+        cur = c.execute(
+            "UPDATE optimization_runs SET status='stopped', completed_at=? "
+            "WHERE status IN ('running','researching','interview')",
+            (_time.strftime("%Y-%m-%dT%H:%M:%S"),),
+        )
+        if cur.rowcount:
+            log.info("recovered %d zombie optimization run(s)", cur.rowcount)
+        c.commit()
     await MGR.start_polling()
     log.info("manager ready on port %s", config.load()["manager"]["port"])
     yield
@@ -318,8 +328,24 @@ async def api_optimize_status(name: str) -> dict:
     conn = db.connect(); db.init_db(conn); optdb.init_optimizer_db(conn)
     run = optdb.get_active_run(conn, name)
     if not run:
+        # Show the last completed/failed run if one exists
+        run = optdb.get_last_run(conn, name)
+        if not run:
+            conn.close()
+            return {"status": "not_started"}
+        # Historical run — get scores from DB steps
+        steps = optdb.get_steps(conn, run["id"])
+        baseline_score = next((s.get("score", 0) for s in steps if s.get("step_number") == 0), 0)
+        best_score = max((s.get("score", 0) for s in steps if s.get("kept")), default=0)
         conn.close()
-        return {"status": "not_started"}
+        return {
+            "status": run["status"],
+            "current_step": run.get("total_steps", 0),
+            "total_steps": run.get("total_steps", 0),
+            "best_score": round(best_score, 1),
+            "baseline_score": round(baseline_score, 1),
+            "improvement_pct": round(((best_score - baseline_score) / baseline_score * 100) if baseline_score > 0 else 0, 1),
+        }
     agent = _OPT_AGENTS.get(name)
     current_step = agent.current_step if agent else 0
     best_score = agent.best_score if agent else 0
@@ -340,9 +366,21 @@ async def api_optimize_history(name: str) -> dict:
     conn = db.connect(); db.init_db(conn); optdb.init_optimizer_db(conn)
     run = optdb.get_active_run(conn, name)
     if not run:
+        # Fall back to the most recent completed/failed run so the user
+        # can see the last result when re-opening the dialog.
+        run = optdb.get_last_run(conn, name)
+    if not run:
         conn.close()
-        return {"steps": []}
+        return {"steps": [], "status": "no_run"}
     steps = optdb.get_steps(conn, run["id"])
+    baseline_score = 0.0
+    if run.get("baseline_step"):
+        baseline = optdb.get_step(conn, run["baseline_step"])
+        if baseline:
+            baseline_score = baseline.get("score", 0) or 0
+    # Include the plan and system context for the UI
+    plan_json = run.get("plan_json") or None
+    system_json = run.get("system_json") or None
     conn.close()
     return {
         "steps": [{
@@ -355,8 +393,26 @@ async def api_optimize_history(name: str) -> dict:
             "kept": s.get("kept", 0),
             "reasoning": s.get("reasoning", ""),
             "benchmark": s.get("benchmark"),
+            "experiment_id": s.get("experiment_id"),
+            "memory_estimate": s.get("memory_estimate"),
         } for s in steps],
+        "status": run["status"],
+        "baseline_score": round(baseline_score, 1),
+        "plan": json.loads(plan_json) if plan_json else None,
+        "system": json.loads(system_json) if system_json else None,
     }
+
+
+@app.get("/api/{name}/optimize/chat")
+async def api_optimize_chat(name: str) -> dict:
+    conn = db.connect(); db.init_db(conn); optdb.init_optimizer_db(conn)
+    run = optdb.get_active_run(conn, name)
+    messages = []
+    if run and run.get("chat_json"):
+        import json as _json
+        messages = _json.loads(run["chat_json"])
+    conn.close()
+    return {"messages": messages}
 
 
 @app.post("/api/{name}/optimize/stop")

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS optimization_runs (
     workload        TEXT,                   -- JSON: {type, concurrency, input_tokens, output_tokens, priority}
     status          TEXT DEFAULT 'interview',  -- interview|researching|running|completed|failed|stopped
     research_json   TEXT,
+    chat_json       TEXT,
     baseline_step   INTEGER,
     best_step       INTEGER,
     total_steps     INTEGER DEFAULT 0,
@@ -53,6 +54,26 @@ CREATE INDEX IF NOT EXISTS idx_opt_steps_run ON optimization_steps(run_id);
 def init_optimizer_db(conn) -> None:
     conn.executescript(OPTIMIZER_SCHEMA)
     conn.commit()
+    # migrations (additive — safe to run repeatedly)
+    cols = {r[1] for r in conn.execute('PRAGMA table_info(optimization_runs)').fetchall()}
+    for col, decl in [
+        ('chat_json', 'TEXT'),
+        ('system_json', 'TEXT'),      # WP1 — system context snapshot
+        ('plan_json', 'TEXT'),        # WP4 — branching optimization plan
+        ('research_notes', 'TEXT'),   # WP3 — synthesized research notes
+    ]:
+        if col not in cols:
+            conn.execute(f'ALTER TABLE optimization_runs ADD COLUMN {col} {decl}')
+            conn.commit()
+    step_cols = {r[1] for r in conn.execute('PRAGMA table_info(optimization_steps)').fetchall()}
+    for col, decl in [
+        ('experiment_id', 'INTEGER'),          # WP5 — which plan experiment
+        ('plan_deviation', 'INTEGER DEFAULT 0'), # WP5 — deviated from plan?
+        ('memory_estimate', 'TEXT'),            # WP6 — pre-check estimate
+    ]:
+        if col not in step_cols:
+            conn.execute(f'ALTER TABLE optimization_steps ADD COLUMN {col} {decl}')
+            conn.commit()
 
 
 def create_run(conn, model_name: str, hf_model_id: str) -> int:
@@ -82,6 +103,16 @@ def get_active_run(conn, model_name: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_last_run(conn, model_name: str) -> dict[str, Any] | None:
+    """Return the most recent optimization run for this model, regardless of status."""
+    conn.row_factory = __import__("sqlite3").Row
+    row = conn.execute(
+        "SELECT * FROM optimization_runs WHERE model_name=? ORDER BY id DESC LIMIT 1",
+        (model_name,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def update_run(conn, run_id: int, **fields) -> None:
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE optimization_runs SET {sets} WHERE id=?", (*fields.values(), run_id))
@@ -94,8 +125,8 @@ def add_step(conn, run_id: int, step: dict[str, Any]) -> int:
         "INSERT INTO optimization_steps "
         "(run_id, step_number, parameter, old_value, new_value, reasoning, "
         "config_json, benchmark_json, metrics_json, score, is_improvement, kept, "
-        "restart_time_s, benchmark_time_s, timestamp) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "restart_time_s, benchmark_time_s, timestamp, experiment_id, memory_estimate) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             run_id, step["step_number"], step.get("parameter"), step.get("old_value"),
             step.get("new_value"), step.get("reasoning"),
@@ -103,6 +134,7 @@ def add_step(conn, run_id: int, step: dict[str, Any]) -> int:
             json.dumps(step.get("metrics")), step.get("score"),
             step.get("is_improvement", 0), step.get("kept", 0),
             step.get("restart_time_s"), step.get("benchmark_time_s"), now_str,
+            step.get("experiment_id"), step.get("memory_estimate"),
         ),
     )
     conn.commit()

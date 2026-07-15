@@ -38,7 +38,7 @@ _SENTENCES = [
 def _generate_prompt(token_target: int) -> str:
     """Generate a synthetic prompt of approximately token_target tokens."""
     words = []
-    target_words = int(token_target * 0.75)  # ~0.75 words per token
+    target_words = int(token_target * 0.15)  # Qwen tokenizer: ~0.15 words/token (much lower than GPT)
     i = 0
     while len(words) < target_words:
         words.append(_SENTENCES[i % len(_SENTENCES)])
@@ -68,6 +68,14 @@ async def run_workload_benchmark(
     input_tokens = workload.get("input_tokens", 500)
     output_tokens = workload.get("output_tokens", 128)
 
+    # Reserve headroom for output + chat template overhead.
+    # The word-to-token estimation overshoots significantly (by 30-50%),
+    # so use a very conservative 40% cap to guarantee the prompt fits.
+    model_max = int(workload.get("max_model_len", 12288))
+    max_input = int(model_max * 0.40)  # 40% for prompt, 60% safety margin
+    if input_tokens > max_input:
+        input_tokens = max_input
+
     prompts = [_generate_prompt(input_tokens) for _ in range(concurrency)]
     base_url = f"http://127.0.0.1:{port}/v1/chat/completions"
 
@@ -85,13 +93,18 @@ async def run_workload_benchmark(
     tok_per_sec_list = []
     total_tokens = 0
     errors = 0
+    error_examples: list[str] = []
 
     for r in results:
         if isinstance(r, Exception):
             errors += 1
+            if len(error_examples) < 3:
+                error_examples.append(f"{type(r).__name__}: {str(r)[:120]}")
             continue
         if r.get("error"):
             errors += 1
+            if len(error_examples) < 3:
+                error_examples.append(f"request_error: {r['error'][:120]}")
             continue
         ttfts.append(r["ttft_ms"])
         tok_per_sec_list.append(r["tok_per_sec"])
@@ -117,6 +130,8 @@ async def run_workload_benchmark(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "errors": errors,
+        "error_summary": (", ".join(error_examples) if error_examples else ""),
+        "has_critical_errors": errors > concurrency * 0.5,
     }
 
 
@@ -139,7 +154,13 @@ async def _send_one(
     completion_tokens = 0
 
     async with client.stream("POST", base_url, json=payload) as resp:
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            body = ""
+            try:
+                body = (await resp.aread()).decode()[:200]
+            except Exception:
+                pass
+            return {"error": f"HTTP {resp.status_code}: {body}"}
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
