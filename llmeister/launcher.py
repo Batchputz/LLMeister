@@ -97,14 +97,40 @@ def _stop_fifo_log(name: str) -> None:
 
 
 def _normalize_command(cmd: str) -> str:
-    """Fix common vLLM CLI mistakes in generated commands."""
-    # --served-model-names (plural, space-separated) -> repeated --served-model-name
+    """Fix common vLLM CLI mistakes in generated commands.
+
+    Two transforms, applied in order:
+    1. Collapse multi-line commands into one line. Research-agent output often
+       stores one flag per line (sometimes with trailing ``\\`` continuations,
+       sometimes without). run-recipe.py turns the stored command into a bash
+       script; a flag line without a preceding continuation backslash then gets
+       executed as its own ``--flag: command not found`` (and vLLM silently runs
+       with defaults -> GPU memory admission failure). Joining to a single line
+       is robust for both variants.
+    2. --served-model-names (plural, space-separated) -> repeated --served-model-name
+    """
+    # 1. Single-line normalization: drop line-continuation backslashes, strip
+    #    each line, join non-empty lines with a space.
+    lines = cmd.splitlines()
+    pieces: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.endswith("\\"):
+            stripped = stripped[:-1].rstrip()
+        if stripped:
+            pieces.append(stripped)
+    cmd = " ".join(pieces)
+
+    # 2. --served-model-names (plural, space-separated) -> repeated --served-model-name
     def _fix_plural(m: re.Match) -> str:
         names_str = m.group(1)
         names = names_str.strip().split()
-        trailing = names_str[len(names_str.rstrip()):]
-        return "--served-model-name " + " --served-model-name ".join(names) + trailing
-    cmd = re.sub(r'--served-model-names\s+((?:[^\s\\]+\s*)+)', _fix_plural, cmd)
+        return "--served-model-name " + " --served-model-name ".join(names)
+    # Non-greedy capture of model ids (never starting with '-'), stops at the
+    # next --flag or end of string, so later flags are not swallowed.
+    cmd = re.sub(r'--served-model-names\s+((?:[^\s-]+\s*)*?)(?=\s+--|\s*$)', _fix_plural, cmd)
     return cmd
 
 
