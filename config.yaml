@@ -31,3 +31,11 @@ research:
 # Optional: auto-wake a sleeping model when a /v1 request targets it.
 # false = return 503 immediately (operator wakes via dashboard).
 wake_on_request: false
+
+# Crash-robustness: restore models that were online before a crash/reboot.
+lifecycle:
+  auto_restore_on_boot: true     # cold-start AWAKE/SLEEPING models when the manager starts
+  restart_max_attempts: 3        # crash-loop budget per model per window
+  restart_window_s: 1800         # budget window (seconds)
+  restart_backoff_s: 30          # delay before an auto-restart (seconds)
+  unhealthy_restart_after: 3     # consecutive failed health polls before auto-restart

@@ -135,7 +135,7 @@ class Planner:
             if action == "sleep":
                 ok = await self.mgr.sleep_model(name)
             else:  # stop
-                ok = await self.mgr.stop(name)
+                ok = await self.mgr.stop(name, manual=False)
             if not ok:
                 log.warning("eviction %s %s failed", action, name)
         # re-check after evictions

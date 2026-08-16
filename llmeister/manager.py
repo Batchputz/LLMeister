@@ -155,6 +155,9 @@ async def lifespan(app: FastAPI):
             log.info("recovered %d zombie optimization run(s)", cur.rowcount)
         c.commit()
     await MGR.start_polling()
+    if MGR.auto_restore_on_boot:
+        log.info("scheduling boot restore of previously-online models")
+        MGR._restore_task = asyncio.create_task(MGR.restore_on_boot())
     log.info("manager ready on port %s", config.load()["manager"]["port"])
     yield
     await MGR.stop_polling()
@@ -255,7 +258,7 @@ async def api_sleep(name: str) -> dict:
 
 @app.post("/api/{name}/stop")
 async def api_stop(name: str) -> dict:
-    ok = await MGR.stop(name); return {"ok": ok, "state": (MGR._get(name) or {}).get("state")}
+    ok = await MGR.stop(name, manual=True); return {"ok": ok, "state": (MGR._get(name) or {}).get("state")}
 
 
 @app.get("/api/system")

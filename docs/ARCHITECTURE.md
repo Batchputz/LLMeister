@@ -46,6 +46,20 @@ The reconcile loop (every 3 seconds) probes all models with containers and fixes
 - Healthy + sleeping → SLEEPING
 - Not healthy + not sleeping → ERROR
 
+**Crash-robustness (auto-restore + self-healing):**
+- A `restore_on_boot` intent flag is persisted per model: set when a model reaches
+  AWAKE/SLEEPING, cleared only by an explicit operator Stop (eviction/maintenance
+  stops keep it).
+- On manager start (boot or service restart), models with intent that have no live
+  container are cold-started in parallel through the memory planner (admission +
+  LRU eviction), so the pre-crash model set comes back without OOMing.
+- The reconcile loop auto-restarts wanted models whose container died or that stay
+  unhealthy for `unhealthy_restart_after` polls, gated by a crash-loop budget
+  (`restart_max_attempts` per `restart_window_s`, backoff) that trips to ERROR
+  instead of retrying forever.
+- `STARTING` is excluded from dead-container detection so in-flight starts aren't
+  raced by the poll loop.
+
 ### Proxy Routing
 
 `/v1/*` requests are proxied to the correct vLLM backend by:

@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from . import config
 from . import db
 from . import launcher
 from . import planner as planner_mod
@@ -114,6 +115,17 @@ class LifecycleManager:
         self._inflight: dict[str, int] = {}   # model name -> in-flight request count (B3)
         self._procs: dict[str, Any] = {}
         self.planner = planner_mod.Planner(self)
+        # crash-robustness: auto-restart bookkeeping + boot restore
+        self._restart_attempts: dict[str, list[float]] = {}   # name -> timestamps of auto-restarts
+        self._restart_inflight: set[str] = set()              # models with an auto-restart in flight
+        self._unhealthy_streak: dict[str, int] = {}           # consecutive failed health polls
+        self._restore_task: asyncio.Task | None = None        # boot restore, so it isn't GC'd
+        lc_cfg = config.load().get("lifecycle", {})
+        self.auto_restore_on_boot = bool(lc_cfg.get("auto_restore_on_boot", True))
+        self.restart_max_attempts = int(lc_cfg.get("restart_max_attempts", 3))
+        self.restart_window_s = float(lc_cfg.get("restart_window_s", 1800))
+        self.restart_backoff_s = float(lc_cfg.get("restart_backoff_s", 30))
+        self.unhealthy_restart_after = int(lc_cfg.get("unhealthy_restart_after", 3))
 
     def _conn(self):
         c = db.connect(self.db_path)
@@ -186,7 +198,15 @@ class LifecycleManager:
             if not m:
                 return False
             if m["state"] in (AWAKE, STARTING):
-                return True
+                # AWAKE may be stale after a host reboot / container loss: force a real
+                # cold start instead of returning True if the tracked container is gone.
+                if (m["state"] == AWAKE and m["container_name"]
+                        and not launcher.is_running(m["container_name"])):
+                    log.warning("%s marked AWAKE but container %s is gone — cold-starting",
+                                name, m["container_name"])
+                    self._set_state(name, STOPPED, container_name=None)
+                else:
+                    return True
             # B1/B2: make room before launching (sleep/stop LRU models to fit RAM)
             ok, reason = await self.planner.make_room(name)
             if not ok:
@@ -207,9 +227,11 @@ class LifecycleManager:
             client = VLLMClient(m["port"])
             ok = await self._wait_health(client, name)
             if ok:
-                self._set_state(name, AWAKE, error=None)
+                self._set_state(name, AWAKE, error=None, restore_on_boot=1)
                 self._touch(name)
                 self._measure(name, container)
+                self._restart_attempts.pop(name, None)
+                self._unhealthy_streak.pop(name, None)
                 log.info("%s AWAKE", name)
             else:
                 self._set_state(name, ERROR, error="cold start health timeout")
@@ -280,24 +302,34 @@ class LifecycleManager:
             for _ in range(30):
                 is_s = await client.is_sleeping()
                 if is_s is False and await client.health():
-                    self._set_state(name, AWAKE, error=None)
+                    self._set_state(name, AWAKE, error=None, restore_on_boot=1)
                     self._touch(name)
+                    self._restart_attempts.pop(name, None)
+                    self._unhealthy_streak.pop(name, None)
                     log.info("%s AWAKE", name)
                     return True
                 await asyncio.sleep(1)
             self._set_state(name, ERROR, error="wake did not become healthy")
             return False
 
-    async def stop(self, name: str) -> bool:
-        """Stop and remove the container for a model."""
+    async def stop(self, name: str, manual: bool = True) -> bool:
+        """Stop and remove the container for a model.
+
+        manual=True (operator action) clears the restore_on_boot intent; eviction /
+        maintenance stops (manual=False) keep it, so the model still gets restored
+        after a reboot if it fits.
+        """
         async with self._lock(name):
             m = self._get(name)
             if not m:
                 return False
             container = m["container_name"] or _container_name(name)
-            log.info("stopping %s (container %s)", name, container)
+            log.info("stopping %s (container %s, manual=%s)", name, container, manual)
             ok = launcher.stop(container)
-            self._set_state(name, STOPPED, container_name=None)
+            kw: dict[str, Any] = {"container_name": None}
+            if manual:
+                kw["restore_on_boot"] = 0
+            self._set_state(name, STOPPED, **kw)
             return ok
 
     def can_serve(self, name: str) -> bool:
@@ -330,29 +362,104 @@ class LifecycleManager:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _reconcile(self) -> None:
-        """Probe every non-STOPPED model and fix drifted state."""
+        """Probe every non-STOPPED model and fix drifted state.
+
+        Self-healing: a wanted model (restore_on_boot) whose container died or is
+        unhealthy gets auto-restarted through the normal start() path (planner
+        admission + crash-loop budget), so vLLM crashes and host reboots are
+        recovered without operator action.
+        """
         models = self.status()
         for m in models:
-            if m["state"] in (PENDING, DISCOVERED, WAKING):
-                continue  # don't fight no-container states (STARTING gets probed for crash detection)
-            # a STOPPED model that still has a container is an orphan (survived a
-            # manager restart) — probe and adopt it instead of skipping.
+            if m["state"] in (PENDING, DISCOVERED, WAKING, STARTING):
+                continue  # no-container states; STARTING is owned by an in-flight start()
             if not m["container_name"]:
                 continue
             client = VLLMClient(m["port"])
             healthy = await client.health()
             is_s = await client.is_sleeping()
             # detect dead container
-            if not m["container_name"] or not launcher.is_running(m["container_name"]):
+            if not launcher.is_running(m["container_name"]):
                 if m["state"] != STOPPED:
                     log.warning("%s container gone -> STOPPED", m["name"])
                     self._set_state(m["name"], STOPPED, container_name=None)
+                if m["restore_on_boot"] and self._restart_budget_ok(m["name"]):
+                    log.info("%s auto-restarting (container died)", m["name"])
+                    asyncio.create_task(self._auto_restart(m["name"], reason="container died"))
                 continue
             if not healthy and is_s is not True:
                 # container alive but not healthy and not sleeping -> error
+                streak = self._unhealthy_streak.get(m["name"], 0) + 1
+                self._unhealthy_streak[m["name"]] = streak
                 if m["state"] != ERROR:
                     self._set_state(m["name"], ERROR, error="health check failing")
+                if (m["restore_on_boot"] and streak >= self.unhealthy_restart_after
+                        and self._restart_budget_ok(m["name"])):
+                    log.warning("%s unhealthy for %d polls — auto-restarting",
+                                m["name"], streak)
+                    self._unhealthy_streak.pop(m["name"], None)
+                    asyncio.create_task(self._auto_restart(m["name"], reason="unhealthy"))
             elif healthy and is_s is True and m["state"] != SLEEPING:
                 self._set_state(m["name"], SLEEPING)
+                self._unhealthy_streak.pop(m["name"], None)
             elif healthy and is_s is False and (m["state"] != AWAKE or m["error"]):
                 self._set_state(m["name"], AWAKE, error=None)
+                self._unhealthy_streak.pop(m["name"], None)
+
+    # ---- crash-robustness helpers ----
+
+    def _restore_candidates(self) -> list[dict[str, Any]]:
+        """Models that were online (AWAKE/SLEEPING) and wanted before a restart."""
+        with self._conn() as c:
+            return [m for m in db.list_models(c)
+                    if m["restore_on_boot"] and m["state"] in (AWAKE, SLEEPING)]
+
+    async def restore_on_boot(self) -> None:
+        """Cold-start every model that was online before a manager/host restart.
+
+        Skips models whose container genuinely survived (manager restart while the
+        host stayed up — reconcile will adopt them). Each start() is lock-guarded
+        and goes through the memory planner (admission + LRU eviction), so a full
+        model set is restored without OOMing the box.
+        """
+        candidates: list[dict[str, Any]] = []
+        for m in self._restore_candidates():
+            if m["container_name"] and launcher.is_running(m["container_name"]):
+                continue  # container survived — reconcile adopts it back
+            candidates.append(m)
+        if not candidates:
+            return
+        log.info("restoring %d model(s) after (re)start: %s",
+                 len(candidates), [m["name"] for m in candidates])
+        await asyncio.gather(*(self.start(m["name"]) for m in candidates))
+
+    def _restart_budget_ok(self, name: str) -> bool:
+        """Crash-loop guard: allow an auto-restart if attempts in the window are below max."""
+        import time as _t
+        now = _t.time()
+        attempts = [t for t in self._restart_attempts.get(name, [])
+                    if now - t < self.restart_window_s]
+        self._restart_attempts[name] = attempts
+        return len(attempts) < self.restart_max_attempts
+
+    async def _auto_restart(self, name: str, reason: str = "auto") -> None:
+        """Re-launch a model through the normal start path, with backoff + budget."""
+        if name in self._restart_inflight:
+            return
+        self._restart_inflight.add(name)
+        try:
+            if not self._restart_budget_ok(name):
+                self._set_state(name, ERROR, error="auto-restart budget exhausted")
+                log.warning("%s not auto-restarting: crash-loop budget exhausted (%s)",
+                            name, reason)
+                return
+            import time as _t
+            self._restart_attempts.setdefault(name, []).append(_t.time())
+            if self.restart_backoff_s:
+                await asyncio.sleep(self.restart_backoff_s)
+            log.info("auto-restarting %s (%s)", name, reason)
+            await self.start(name)
+        except Exception as e:
+            log.exception("auto-restart failed for %s: %s", name, e)
+        finally:
+            self._restart_inflight.discard(name)

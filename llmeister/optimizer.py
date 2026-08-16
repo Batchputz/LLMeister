@@ -182,7 +182,7 @@ class OptimizationAgent:
             # Phase 5: Final restart with best config
             if self.best_config:
                 db.set_config(conn, self.model_name, json.dumps(self.best_config))
-                await self.mgr.stop(self.model_name)
+                await self.mgr.stop(self.model_name, manual=False)
                 await asyncio.sleep(2)
                 await self.mgr.start(self.model_name)
 
@@ -659,7 +659,7 @@ Respond as JSON:
     async def _restart_model(self) -> bool:
         """Stop and start the model. Returns True if healthy."""
         try:
-            await self.mgr.stop(self.model_name)
+            await self.mgr.stop(self.model_name, manual=False)
             await asyncio.sleep(2)
             ok = await self.mgr.start(self.model_name)
             return ok

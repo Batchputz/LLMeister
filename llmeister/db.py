@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS models (
     measured_weight_memory_mb INTEGER,  -- memory retained when SLEEPING (weights)
     estimated_memory_mb INTEGER,
     sleep_level INTEGER NOT NULL DEFAULT 1,
+    restore_on_boot INTEGER NOT NULL DEFAULT 0,  -- intent: bring this model back after a crash/reboot
     last_active_at REAL,
     error TEXT,
     created_at REAL NOT NULL,
@@ -75,6 +76,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(models)").fetchall()}
     if "measured_weight_memory_mb" not in cols:
         conn.execute("ALTER TABLE models ADD COLUMN measured_weight_memory_mb INTEGER")
+    if "restore_on_boot" not in cols:
+        conn.execute("ALTER TABLE models ADD COLUMN restore_on_boot INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -219,6 +222,7 @@ def set_state(
     error: str | None = None,
     measured_max_memory_mb: int | None = None,
     measured_weight_memory_mb: int | None = None,
+    restore_on_boot: int | None = _UNSET,
 ) -> None:
     fields = ["state = ?", "updated_at = ?"]
     vals: list[Any] = [state, now()]
@@ -237,6 +241,9 @@ def set_state(
     if measured_weight_memory_mb is not None:
         fields.append("measured_weight_memory_mb = ?")
         vals.append(measured_weight_memory_mb)
+    if restore_on_boot is not _UNSET:
+        fields.append("restore_on_boot = ?")
+        vals.append(1 if restore_on_boot else 0)
     vals.append(name)
     conn.execute(f"UPDATE models SET {', '.join(fields)} WHERE name = ?", vals)
     conn.commit()
