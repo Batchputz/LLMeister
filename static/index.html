@@ -233,6 +233,12 @@
             <div class="hint">Fraction of 128 GB reserved. Higher = bigger KV cache but less room for other models.</div></div>
           <div class="field"><label>Max model len (tokens)</label><input type="number" x-model.number="modal.cfg.defaults.max_model_len" class="mono">
             <div class="hint">Context window per sequence. Large values increase cold-start time + memory.</div></div>
+          <div class="field"><label>Max batched tokens</label><input type="number" x-model.number="modal.cfg.defaults.max_num_batched_tokens" class="mono">
+            <div class="hint">Chunked-prefill batch budget. Used by <span class="mono">{max_num_batched_tokens}</span> in the command.</div></div>
+          <div class="field"><label>Max sequences</label><input type="number" x-model.number="modal.cfg.defaults.max_num_seqs" class="mono">
+            <div class="hint">Concurrent sequences. Used by <span class="mono">{max_num_seqs}</span> in the command.</div></div>
+          <div class="field"><label>Block size</label><input type="number" x-model.number="modal.cfg.defaults.block_size" class="mono">
+            <div class="hint">KV-cache block size. Used by <span class="mono">{block_size}</span> in the command.</div></div>
           <div class="field"><label>Port</label><input type="number" x-model.number="modal.cfg.defaults.port" class="mono" readonly>
             <div class="hint">Auto-allocated from the 8001–8099 pool on Approve.</div></div>
           <div class="group-title">Mods (applied at launch)</div>
@@ -240,7 +246,8 @@
             <span>fix-sleep-wake-mamba</span><span class="hint">— required for Mamba/GDN-hybrid + quantized KV cache (wake crashes without it)</span></div>
           <div class="group-title">vLLM command template</div>
           <div class="field"><label>Command (advanced)</label><textarea x-model="modal.cfg.command"></textarea>
-            <div class="hint">Full <span class="mono">vllm serve</span> invocation. Keep <span class="mono">{host} {port} {gpu_memory_utilization} {max_model_len} {tensor_parallel}</span> as braced placeholders.</div></div>
+            <div class="hint">Full <span class="mono">vllm serve</span> invocation. Keep <span class="mono">{host} {port} {gpu_memory_utilization} {max_model_len} {tensor_parallel}</span> as braced placeholders.</div>
+            <div class="hint" x-show="missingTemplateVars().length>0" style="color:var(--warn)">⚠ Placeholder(s) without a defaults value: <span class="mono" x-text="missingTemplateVars().join(', ')"></span> — fill the fields above or remove them from the command. Save is blocked until this is resolved.</div></div>
         </div>
       </template>
     </div>
@@ -415,6 +422,9 @@ function mgr(){return{
     catch(e){alert(e.message)}finally{this.busy=this.busy.filter(function(n){return n!==name});this.poll()}},
   async approve(name){const r=await fetch('/api/models/'+name+'/approve',{method:'POST'});const d=await r.json();if(!r.ok)alert(d.error);else this.poll()},
   // ---- edit modal ----
+  missingTemplateVars(){if(!this.modal.cfg||!this.modal.cfg.command)return[];var defs=this.modal.cfg.defaults||{};
+    var used={},m,re=/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;while((m=re.exec(this.modal.cfg.command)))used[m[1]]=1;
+    return Object.keys(used).filter(function(k){return !(k in defs)}).sort()},
   isMod(m){return this.modal.cfg&&Array.isArray(this.modal.cfg.mods)&&this.modal.cfg.mods.includes(m)},
   toggleMod(m){if(!this.modal.cfg)return;this.modal.cfg.mods=this.modal.cfg.mods||[];var i=this.modal.cfg.mods.indexOf(m);
     if(i>=0){this.modal.cfg.mods.splice(i,1)}else{this.modal.cfg.mods.push(m)}this.modal.dirty=true},
@@ -425,7 +435,9 @@ function mgr(){return{
       this.modal.cfg.defaults=this.modal.cfg.defaults||{};this.modal.cfg.mods=this.modal.cfg.mods||[];this.modal.loading=false;
     }catch(e){this.modal.status='Load failed: '+e.message;this.modal.statusType='err';this.modal.loading=false}},
   closeEdit(){if(this.modal.dirty&&!confirm('Discard unsaved changes?'))return;this.modal.open=false;this.modal.cfg=null;this.modal.dirty=false;this.modal.status=''},
-  async saveEdit(){if(!this.modal.cfg)return;this.modal.saving=true;this.modal.status='Saving…';this.modal.statusType='';
+  async saveEdit(){if(!this.modal.cfg)return;var missing=this.missingTemplateVars();
+    if(missing.length){this.modal.status='Save blocked: missing defaults for '+missing.join(', ');this.modal.statusType='err';this.modal.dirty=true;return}
+    this.modal.saving=true;this.modal.status='Saving…';this.modal.statusType='';
     this.modal.cfg.served_model_names=this.modal.served.split(',').map(function(s){return s.trim()}).filter(Boolean);
     this.modal.cfg.aliases=this.modal.aliases.split(',').map(function(s){return s.trim()}).filter(Boolean);
     try{const r=await fetch('/api/models/'+this.modal.name+'/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.modal.cfg)});

@@ -215,6 +215,22 @@ class LifecycleManager:
                 return False
             container = _container_name(name)
             cfg = json.loads(m["config"])
+            # Stale-container guard: an orphaned container from a previous
+            # timed-out start would make launch-cluster.sh exec a SECOND
+            # instance into it (duplicate vLLM eating double memory). Remove
+            # any leftover container before launching fresh.
+            if launcher.is_running(container):
+                log.warning("%s stale container %s still running — removing before launch", name, container)
+                launcher.stop(container)
+            # Also reap any leftover launch supervisor from a previous attempt.
+            stale = self._procs.pop(name, None)
+            if stale and stale.poll() is None:
+                log.warning("%s stale launch proc %d still alive — terminating", name, stale.pid)
+                try:
+                    stale.terminate(); stale.wait(timeout=10)
+                except Exception:
+                    try: stale.kill()
+                    except Exception: pass
             log.info("starting %s (container %s, port %s)", name, container, m["port"])
             self._set_state(name, STARTING, container_name=container, port=m["port"], error=None)
             try:
@@ -235,34 +251,48 @@ class LifecycleManager:
                 log.info("%s AWAKE", name)
             else:
                 self._set_state(name, ERROR, error="cold start health timeout")
+                # Cleanup: the launched vLLM may still be loading (slow cold
+                # start) and would otherwise keep consuming memory + become an
+                # orphan that a later start() execs a duplicate instance into.
+                log.warning("%s cold start timed out — cleaning up container %s", name, container)
+                proc = self._procs.pop(name, None)
+                if proc and proc.poll() is None:
+                    try:
+                        proc.terminate(); proc.wait(timeout=10)
+                    except Exception:
+                        try: proc.kill()
+                        except Exception: pass
+                try:
+                    launcher.stop(container)
+                except Exception as e:
+                    log.warning("cleanup stop failed for %s: %s", name, e)
             return ok
 
     async def _wait_health(self, client: VLLMClient, name: str) -> bool:
         """Wait until the vLLM backend is ready to serve requests.
 
-        Two-phase: first wait for /health (HTTP server up, fast: ~30s),
-        then wait for /v1/models (model fully loaded, slow: 2-5 min for
-        a 9B model on cold start).
+        Single budget (START_MAX_WAIT): DFlash cold starts with CUDA graph
+        capture can take 6-10 min, especially when models load in parallel.
+        The API server (/health) only starts after the engine finishes
+        loading, so we poll both /health and /v1/models within one budget
+        instead of failing after a fixed 5-min phase-1.
         """
         elapsed = 0.0
-        # Phase 1: HTTP server up (INT4 model loading on ARM64 can take 3-5 min)
-        while elapsed < 300:  # 5 min max for server start
-            if await client.health():
-                log.debug("%s HTTP server up after %.0fs", name, elapsed)
-                break
-            await asyncio.sleep(START_POLL_INTERVAL)
-            elapsed += START_POLL_INTERVAL
-        else:
-            log.warning("%s HTTP server never came up", name)
-            return False
-        # Phase 2: Model fully loaded (slow — wait the remaining budget)
+        server_up = False
         while elapsed < START_MAX_WAIT:
-            if await client.ready():
+            if not server_up:
+                server_up = await client.health()
+                if server_up:
+                    log.debug("%s HTTP server up after %.0fs", name, elapsed)
+            if server_up and await client.ready():
                 log.debug("%s model ready after %.0fs", name, elapsed)
                 return True
             await asyncio.sleep(START_POLL_INTERVAL)
             elapsed += START_POLL_INTERVAL
-        log.warning("%s model did not become ready within %ds", name, START_MAX_WAIT)
+        if not server_up:
+            log.warning("%s HTTP server never came up within %ds", name, START_MAX_WAIT)
+        else:
+            log.warning("%s model did not become ready within %ds", name, START_MAX_WAIT)
         return False
 
     async def sleep_model(self, name: str, level: int = 1) -> bool:

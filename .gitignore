@@ -5,3 +5,4 @@ __pycache__/
 llmeister.db
 generated-recipes/
 *.launch.log
+.pi-subagents/
